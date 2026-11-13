@@ -88,3 +88,4 @@ WHERE rol IS NULL OR password_hash = '123456';
 SELECT id, nombre_completo, correo, rol, estado, created_at 
 FROM usuarios 
 ORDER BY rol ASC, correo ASC;
+

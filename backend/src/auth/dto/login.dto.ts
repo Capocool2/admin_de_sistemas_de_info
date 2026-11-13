@@ -10,3 +10,4 @@ export class LoginDto {
   @IsNotEmpty({ message: 'Debe ingresar la contraseña' })
   password: string;
 }
+
