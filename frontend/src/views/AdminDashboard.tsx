@@ -8,12 +8,18 @@ import {
   Battery,
   AlertTriangle,
   RefreshCw,
+  LogOut,
 } from 'lucide-react';
 import { getSocket, joinRoom } from '../services/socket';
 import { resetDevTrips, getScooters } from '../services/api';
-import { SecurityAlert, TelemetryBroadcast } from '../types';
+import { SecurityAlert, TelemetryBroadcast, AuthUser } from '../types';
 
-export const AdminDashboard: React.FC = () => {
+interface AdminDashboardProps {
+  currentUser?: AuthUser | null;
+  onLogout?: () => void;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onLogout }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<{ [key: string]: L.Marker }>({});
@@ -350,16 +356,21 @@ export const AdminDashboard: React.FC = () => {
   return (
     <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
       {/* Top Navbar */}
-      <header className="h-14 border-b border-slate-800 bg-slate-900/80 px-4 flex items-center justify-between shrink-0">
+      <header className="h-14 border-b border-slate-800 bg-slate-900/90 px-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
             ⚡
           </div>
           <div>
-            <h1 className="text-sm font-bold text-white tracking-wide">
-              SAME • Centro de Control Operativo
+            <h1 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
+              <span>SAME • Centro de Control Operativo</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-bold uppercase">
+                Admin RBAC
+              </span>
             </h1>
-            <p className="text-[10px] text-slate-400">Torre de Vigilancia y Gestión de Flota</p>
+            <p className="text-[10px] text-cyan-400 font-medium">
+              {currentUser?.nombre_completo ? `Admin: ${currentUser.nombre_completo}` : 'Torre de Vigilancia y Gestión de Flota'}
+            </p>
           </div>
         </div>
 
@@ -369,12 +380,23 @@ export const AdminDashboard: React.FC = () => {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Resetear Flota Dev</span>
+            <span>Resetear Flota</span>
           </button>
-          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-emerald-950/60 text-emerald-400 border border-emerald-800">
+
+          <span className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-emerald-950/60 text-emerald-400 border border-emerald-800">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>WebSocket Conectado</span>
+            <span>WebSocket En Vivo</span>
           </span>
+
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800 transition font-medium"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Cerrar Sesión</span>
+            </button>
+          )}
         </div>
       </header>
 

@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
     correo VARCHAR(100) NOT NULL UNIQUE,
     telefono VARCHAR(20) NOT NULL,
     estado VARCHAR(20) NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo', 'bloqueado')),
+    rol VARCHAR(20) NOT NULL DEFAULT 'turista' CHECK (rol IN ('turista', 'admin')),
+    password_hash VARCHAR(255) NOT NULL DEFAULT '$2a$10$PjXrXgBB0E1FeDHEXNIV9.TzGyjU5EvTAPYXWp11XtwMNgapFAZre',
     token_pago VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -87,19 +89,28 @@ CREATE INDEX IF NOT EXISTS idx_viajes_usuario_activo ON viajes(usuario_id) WHERE
 TRUNCATE TABLE pagos, viajes, alertas CASCADE;
 
 -- ============================================================================
--- 10. DATOS SEMILLA: USUARIOS DE PRUEBA
+-- 10. DATOS SEMILLA: USUARIOS DE PRUEBA Y ADMINISTRADOR
 -- ============================================================================
-INSERT INTO usuarios (id, nombre_completo, documento_identidad, correo, telefono, estado, token_pago)
+INSERT INTO usuarios (id, nombre_completo, documento_identidad, correo, telefono, estado, rol, password_hash, token_pago)
 VALUES 
-    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'Carlos Arturo Mendoza', 'CC-1042789123', 'carlos.mendoza@same.com.co', '+573001234567', 'activo', 'tok_wompi_visa_test_4242'),
-    ('b1ffbc99-9c0b-4ef8-bb6d-6bb9bd380b22', 'María Camila Gómez', 'CC-1045987654', 'maria.gomez@same.com.co', '+573109876543', 'activo', 'tok_wompi_mc_test_5555'),
-    ('c2ddbc99-9c0b-4ef8-bb6d-6bb9bd380c33', 'Andrés Felipe Torres', 'CC-1047123987', 'andres.torres@same.com.co', '+573204567890', 'activo', 'tok_wompi_visa_test_4000')
+    -- Cuenta Administrador Oficial (admin@same.com / Admin2026*)
+    ('e0a1b2c3-d4e5-4f6a-8b9c-0d1e2f3a4b5c', 'Administrador Operativo Malecón', 'ADM-SAME-001', 'admin@same.com', '+573009990001', 'activo', 'admin', '$2a$10$X/FbsuHeIEokAfnZxLJ1Ze5zpo7SOGb3T8.RJ5eqSpDyUy1kCSwAa', NULL),
+    
+    -- Cuenta Turista de Pruebas (test@same.com / Turista123*)
+    ('f1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', 'Turista de Pruebas SAME', 'CC-1042999888', 'test@same.com', '+573007778899', 'activo', 'turista', '$2a$10$PjXrXgBB0E1FeDHEXNIV9.TzGyjU5EvTAPYXWp11XtwMNgapFAZre', 'tok_wompi_visa_test_4242'),
+    
+    -- Turistas Adicionales
+    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'Carlos Arturo Mendoza', 'CC-1042789123', 'carlos.mendoza@same.com.co', '+573001234567', 'activo', 'turista', '$2a$10$PjXrXgBB0E1FeDHEXNIV9.TzGyjU5EvTAPYXWp11XtwMNgapFAZre', 'tok_wompi_visa_test_4242'),
+    ('b1ffbc99-9c0b-4ef8-bb6d-6bb9bd380b22', 'María Camila Gómez', 'CC-1045987654', 'maria.gomez@same.com.co', '+573109876543', 'activo', 'turista', '$2a$10$PjXrXgBB0E1FeDHEXNIV9.TzGyjU5EvTAPYXWp11XtwMNgapFAZre', 'tok_wompi_mc_test_5555'),
+    ('c2ddbc99-9c0b-4ef8-bb6d-6bb9bd380c33', 'Andrés Felipe Torres', 'CC-1047123987', 'andres.torres@same.com.co', '+573204567890', 'activo', 'turista', '$2a$10$PjXrXgBB0E1FeDHEXNIV9.TzGyjU5EvTAPYXWp11XtwMNgapFAZre', 'tok_wompi_visa_test_4000')
 ON CONFLICT (id) DO UPDATE SET
     nombre_completo = EXCLUDED.nombre_completo,
     documento_identidad = EXCLUDED.documento_identidad,
     correo = EXCLUDED.correo,
     telefono = EXCLUDED.telefono,
     estado = EXCLUDED.estado,
+    rol = EXCLUDED.rol,
+    password_hash = EXCLUDED.password_hash,
     token_pago = EXCLUDED.token_pago;
 
 -- ============================================================================

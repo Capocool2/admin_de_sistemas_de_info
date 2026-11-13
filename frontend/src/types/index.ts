@@ -50,6 +50,20 @@ export interface TripReceipt {
   scooterEstadoActual: ScooterState;
 }
 
+export interface AuthUser {
+  id: string;
+  nombre_completo: string;
+  correo: string;
+  rol: 'admin' | 'turista';
+}
+
+export interface AuthResponse {
+  statusCode: number;
+  message: string;
+  access_token: string;
+  user: AuthUser;
+}
+
 export interface SecurityAlert {
   id: string;
   type: 'robo' | 'fuera_perimetro' | 'caida' | 'bateria_baja';

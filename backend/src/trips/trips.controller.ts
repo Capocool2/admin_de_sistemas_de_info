@@ -5,11 +5,14 @@ import {
   Body,
   Get,
   Param,
+  Req,
   HttpCode,
   HttpStatus,
   ValidationPipe,
   UsePipes,
 } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
 import { TripsService } from './trips.service';
 import { StartTripDto } from './dto/start-trip.dto';
 import { EndTripDto } from './dto/end-trip.dto';
@@ -17,7 +20,24 @@ import { EndTripDto } from './dto/end-trip.dto';
 @Controller('api/trips')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class TripsController {
-  constructor(private readonly tripsService: TripsService) {}
+  constructor(
+    private readonly tripsService: TripsService,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  private extractUserIdFromToken(req: Request): string | undefined {
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const payload: any = this.jwtService.decode(token);
+        return payload?.sub;
+      } catch (err) {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
 
   /**
    * Endpoint: Iniciar viaje
@@ -25,8 +45,9 @@ export class TripsController {
    */
   @Post('start')
   @HttpCode(HttpStatus.CREATED)
-  async startTrip(@Body() dto: StartTripDto) {
-    return this.tripsService.startTrip(dto);
+  async startTrip(@Body() dto: StartTripDto, @Req() req: Request) {
+    const authUserId = this.extractUserIdFromToken(req);
+    return this.tripsService.startTrip(dto, authUserId);
   }
 
   /**
@@ -44,8 +65,10 @@ export class TripsController {
    * GET /api/trips/active/:usuarioId
    */
   @Get('active/:usuarioId')
-  async getActiveTrip(@Param('usuarioId') usuarioId: string) {
-    const trip = await this.tripsService.getActiveTripByUserId(usuarioId);
+  async getActiveTrip(@Param('usuarioId') usuarioId: string, @Req() req: Request) {
+    const authUserId = this.extractUserIdFromToken(req);
+    const resolvedId = (usuarioId === 'me' && authUserId) ? authUserId : usuarioId;
+    const trip = await this.tripsService.getActiveTripByUserId(resolvedId);
     return {
       statusCode: HttpStatus.OK,
       hasActiveTrip: !!trip,

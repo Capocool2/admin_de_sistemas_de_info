@@ -31,6 +31,16 @@ export class Usuario {
   })
   estado: 'activo' | 'bloqueado';
 
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: 'turista',
+  })
+  rol: 'turista' | 'admin';
+
+  @Column({ type: 'varchar', length: 255, select: false })
+  password_hash: string;
+
   @Column({ type: 'varchar', length: 100, nullable: true })
   token_pago: string;
 

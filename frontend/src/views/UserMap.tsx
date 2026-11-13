@@ -2,14 +2,19 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { QrCode, RefreshCw } from 'lucide-react';
+import { QrCode, RefreshCw, LogOut } from 'lucide-react';
 import { getSocket, joinRoom } from '../services/socket';
 import { startTrip, endTrip, getActiveTrip, resetDevTrips, getScooters } from '../services/api';
 import { ScannerModal } from '../components/ScannerModal';
 import { ActiveTripPanel } from '../components/ActiveTripPanel';
 import { EndTripModal } from '../components/EndTripModal';
 import { ReceiptModal } from '../components/ReceiptModal';
-import { ActiveTrip, TelemetryBroadcast, TripReceipt, ZoneGeofence } from '../types';
+import { ActiveTrip, TelemetryBroadcast, TripReceipt, ZoneGeofence, AuthUser } from '../types';
+
+interface UserMapProps {
+  currentUser?: AuthUser | null;
+  onLogout?: () => void;
+}
 
 // Usuario de prueba configurado en la base de datos de Neon
 const TEST_USER_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
@@ -84,7 +89,7 @@ const GEOFENCES: ZoneGeofence[] = [
   },
 ];
 
-export const UserMap: React.FC = () => {
+export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<{ [key: string]: L.Marker }>({});
@@ -99,9 +104,11 @@ export const UserMap: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const activeUserId = currentUser?.id || TEST_USER_ID;
+
   // 1. Cargar viaje activo previo al montar (evita bloqueos si la página se recarga)
   useEffect(() => {
-    getActiveTrip(TEST_USER_ID)
+    getActiveTrip(activeUserId)
       .then((trip) => {
         if (trip) {
           setActiveTrip({
@@ -114,7 +121,7 @@ export const UserMap: React.FC = () => {
         }
       })
       .catch((err) => console.log('Sin viaje activo previo:', err));
-  }, []);
+  }, [activeUserId]);
 
   // 2. Inicializar mapa Leaflet con OpenStreetMap estándar (Sin marcas de agua ni API Key)
   useEffect(() => {
@@ -311,7 +318,7 @@ export const UserMap: React.FC = () => {
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      const res = await startTrip(TEST_USER_ID, scooterId, forzarCierreAnterior);
+      const res = await startTrip(scooterId, forzarCierreAnterior, activeUserId);
       setActiveTrip(res.data);
       setIsScannerOpen(false);
 
@@ -355,14 +362,16 @@ export const UserMap: React.FC = () => {
   return (
     <div className="relative w-full h-full overflow-hidden flex flex-col">
       {/* Top Floating Header */}
-      <header className="absolute top-3 inset-x-3 z-30 flex items-center justify-between p-3 bg-slate-900/90 border border-slate-700/80 rounded-2xl backdrop-blur-md shadow-lg max-w-md mx-auto">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
+      <header className="absolute top-3 inset-x-3 z-30 flex items-center justify-between p-3 bg-slate-900/95 border border-slate-700/80 rounded-2xl backdrop-blur-md shadow-lg max-w-md mx-auto">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold shrink-0">
             ⚡
           </div>
           <div>
-            <h1 className="text-sm font-bold text-white tracking-wide">SAME Mobile</h1>
-            <p className="text-[10px] text-slate-400">Gran Malecón del Río • Barranquilla</p>
+            <h1 className="text-sm font-bold text-white tracking-wide">
+              Hola, {currentUser?.nombre_completo ? currentUser.nombre_completo.split(' ')[0] : 'Turista'} 👋
+            </h1>
+            <p className="text-[10px] text-emerald-400 font-medium">Turista Activo • Gran Malecón</p>
           </div>
         </div>
 
@@ -374,16 +383,17 @@ export const UserMap: React.FC = () => {
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
-          <div className="flex items-center gap-1.5 text-[10px]">
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-800">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              Parqueo
-            </span>
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-950/80 text-amber-300 border border-amber-800">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              Peatonal
-            </span>
-          </div>
+
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              title="Cerrar Sesión"
+              className="p-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800 transition flex items-center gap-1 text-[11px]"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Salir</span>
+            </button>
+          )}
         </div>
       </header>
 

@@ -9,6 +9,7 @@ import { Pago } from '../database/entities/pago.entity';
 import { Alerta } from '../database/entities/alerta.entity';
 import { ZonaGeocerca } from '../database/entities/zona-geocerca.entity';
 import { TelemetryModule } from '../telemetry/telemetry.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { TelemetryModule } from '../telemetry/telemetry.module';
       ZonaGeocerca,
     ]),
     TelemetryModule,
+    AuthModule,
   ],
   controllers: [TripsController],
   providers: [TripsService],

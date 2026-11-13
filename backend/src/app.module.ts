@@ -11,6 +11,7 @@ import { Pago } from './database/entities/pago.entity';
 import { Alerta } from './database/entities/alerta.entity';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { TripsModule } from './trips/trips.module';
+import { AuthModule } from './auth/auth.module';
 
 const rawDbUrl = process.env.DATABASE_URL || '';
 const cleanDbUrl = rawDbUrl.replace('&channel_binding=require', '').replace('?channel_binding=require', '');
@@ -34,6 +35,7 @@ const cleanDbUrl = rawDbUrl.replace('&channel_binding=require', '').replace('?ch
     }),
 
     // 3. Módulos de la Aplicación
+    AuthModule,
     TelemetryModule,
     TripsModule,
   ],

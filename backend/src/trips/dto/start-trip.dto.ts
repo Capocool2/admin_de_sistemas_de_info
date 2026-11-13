@@ -2,9 +2,9 @@
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class StartTripDto {
+  @IsOptional()
   @IsUUID('4', { message: 'El usuarioId debe ser un UUID v4 válido' })
-  @IsNotEmpty({ message: 'El usuarioId es obligatorio' })
-  usuarioId: string;
+  usuarioId?: string;
 
   @IsString({ message: 'El scooterId debe ser una cadena de texto' })
   @IsNotEmpty({ message: 'El scooterId es obligatorio (ej: SCOOTER-01)' })
