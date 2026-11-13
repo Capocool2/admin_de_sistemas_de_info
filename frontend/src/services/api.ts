@@ -173,6 +173,15 @@ export async function getScooters() {
   return data.data || [];
 }
 
+export async function getPublicZones() {
+  const response = await fetch(`${API_BASE_URL}/api/trips/zones`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.data || [];
+}
+
 export async function getAllTrips() {
   const response = await fetch(`${API_BASE_URL}/api/trips`, {
     headers: getHeaders(),
@@ -180,4 +189,141 @@ export async function getAllTrips() {
   if (!response.ok) return [];
   const data = await response.json();
   return data.data || [];
+}
+
+// ---------------------------------------------------------------------------
+// 3. TORRE DE CONTROL ADMINISTRATIVA (RBAC: admin)
+// ---------------------------------------------------------------------------
+
+async function parseJsonOrThrow(response: Response, fallbackMsg: string) {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || fallbackMsg);
+  }
+  return data;
+}
+
+export async function getAdminFleet() {
+  const response = await fetch(`${API_BASE_URL}/api/admin/fleet`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.data || [];
+}
+
+export async function getAdminSummary() {
+  const response = await fetch(`${API_BASE_URL}/api/admin/summary`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) return null;
+  const data = await response.json();
+  return data.data || null;
+}
+
+export async function updateAdminScooterStatus(
+  scooterId: string,
+  estado: 'disponible' | 'mantenimiento',
+  deferIfInUse = false,
+) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/status`, {
+    method: 'PATCH',
+    headers: getHeaders(),
+    body: JSON.stringify({ estado, deferIfInUse }),
+  });
+  return parseJsonOrThrow(response, 'No fue posible actualizar el estado del monopatín');
+}
+
+export async function relocateAdminScooter(
+  scooterId: string,
+  stationId: 'P1' | 'P2' | 'P3',
+  rechargeBattery = true,
+) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/relocate`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ stationId, rechargeBattery }),
+  });
+  return parseJsonOrThrow(response, 'No fue posible recolocar el monopatín');
+}
+
+export async function clearAdminScooterLock(scooterId: string) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/clear-lock`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
+  return parseJsonOrThrow(response, 'No fue posible liberar el bloqueo');
+}
+
+export async function sendAdminScooterNotice(scooterId: string, message: string) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/notice`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ message }),
+  });
+  return parseJsonOrThrow(response, 'No fue posible enviar el aviso al turista');
+}
+
+export async function getAdminAlerts(estado?: 'pendiente' | 'atendida') {
+  const query = estado ? `?estado=${estado}` : '';
+  const response = await fetch(`${API_BASE_URL}/api/admin/alerts${query}`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) return { alerts: [], pendingCount: 0 };
+  const data = await response.json();
+  return data.data || { alerts: [], pendingCount: 0 };
+}
+
+export async function attendAdminAlert(alertId: string) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/alerts/${alertId}/attend`, {
+    method: 'PATCH',
+    headers: getHeaders(),
+  });
+  return parseJsonOrThrow(response, 'No fue posible marcar la alerta como atendida');
+}
+
+export async function getAdminUsers() {
+  const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.data || [];
+}
+
+export async function updateAdminUserStatus(
+  userId: string,
+  estado: 'activo' | 'bloqueado',
+) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/status`, {
+    method: 'PATCH',
+    headers: getHeaders(),
+    body: JSON.stringify({ estado }),
+  });
+  return parseJsonOrThrow(response, 'No fue posible actualizar la cuenta del usuario');
+}
+
+export async function getAdminZones() {
+  const response = await fetch(`${API_BASE_URL}/api/admin/zones`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.data || [];
+}
+
+export async function updateAdminZone(
+  zoneId: string,
+  payload: {
+    limite_velocidad?: number;
+    tarifa_minuto?: number;
+    applyRateToAllZones?: boolean;
+  },
+) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/zones/${zoneId}`, {
+    method: 'PATCH',
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow(response, 'No fue posible actualizar la configuración de zona');
 }

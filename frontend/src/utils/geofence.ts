@@ -109,10 +109,20 @@ export interface EvaluatedGeofence {
   isPedestrianZone: boolean;
 }
 
+export interface ZoneSpeedOverride {
+  nombre: string;
+  tipo: ZoneType;
+  limite_velocidad: number;
+}
+
 /**
  * Evalúa la zona geocerca activa en (lat, lng) respetando la misma prioridad que PostGIS.
  */
-export function evaluateGeofence(lat: number, lng: number): EvaluatedGeofence {
+export function evaluateGeofence(
+  lat: number,
+  lng: number,
+  zoneOverrides?: ZoneSpeedOverride[],
+): EvaluatedGeofence {
   const matched = MALECON_GEOFENCES.filter((geo) =>
     isPointInPolygon(lat, lng, geo.coordinates),
   ).sort((a, b) => ZONE_PRIORITY[a.tipo] - ZONE_PRIORITY[b.tipo]);
@@ -131,11 +141,15 @@ export function evaluateGeofence(lat: number, lng: number): EvaluatedGeofence {
   const top = matched[0];
   const isParkingZone = matched.some((z) => z.tipo === 'parqueo');
   const isPedestrianZone = top.tipo === 'peatonal';
-  const maxSpeed = top.tipo === 'peatonal' || top.tipo === 'parqueo' ? 10 : 20;
+  const defaultMaxSpeed = top.tipo === 'peatonal' || top.tipo === 'parqueo' ? 10 : 20;
+  const matchedOverride =
+    zoneOverrides?.find((z) => z.nombre === top.nombre) ||
+    zoneOverrides?.find((z) => z.tipo === top.tipo);
+  const maxSpeed = Number(matchedOverride?.limite_velocidad) || defaultMaxSpeed;
 
   return {
     insidePerimeter: true,
-    zoneName: top.nombre,
+    zoneName: matchedOverride?.nombre || top.nombre,
     zoneType: top.tipo,
     maxSpeed,
     isParkingZone,

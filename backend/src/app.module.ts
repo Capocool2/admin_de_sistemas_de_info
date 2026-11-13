@@ -12,6 +12,7 @@ import { Alerta } from './database/entities/alerta.entity';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { TripsModule } from './trips/trips.module';
 import { AuthModule } from './auth/auth.module';
+import { AdminModule } from './admin/admin.module';
 
 const rawDbUrl = process.env.DATABASE_URL || '';
 const cleanDbUrl = rawDbUrl.replace('&channel_binding=require', '').replace('?channel_binding=require', '');
@@ -38,6 +39,7 @@ const cleanDbUrl = rawDbUrl.replace('&channel_binding=require', '').replace('?ch
     AuthModule,
     TelemetryModule,
     TripsModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

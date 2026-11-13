@@ -21,6 +21,7 @@ export class TripsService {
   private readonly logger = new Logger(TripsService.name);
   private readonly DEFAULT_RATE_PER_MINUTE = 500; // COP
   private readonly ABANDONMENT_PENALTY_COP = 15000; // Multa por dejar fuera de estación (COP)
+  private readonly lockedTripRates = new Map<string, number>();
 
   constructor(
     @InjectRepository(Viaje)
@@ -148,7 +149,10 @@ export class TripsService {
       );
     }
 
-    // 4. INSERT REAL en viajes en PostgreSQL Neon con RETURNING *
+    // 4. Tarifa vigente al inicio del viaje (protege al turista contra cambios posteriores)
+    const tarifaInicioCOP = await this.getCurrentBaseRatePerMinute();
+
+    // 5. INSERT REAL en viajes en PostgreSQL Neon con RETURNING *
     const insertViajeRows = await this.dataSource.query(
       `INSERT INTO viajes (usuario_id, monopatin_id, estado, inicio_viaje) 
        VALUES ($1, $2, 'activo', NOW()) 
@@ -156,15 +160,17 @@ export class TripsService {
       [usuario.id, scooter.id],
     );
     const viajeGuardado = insertViajeRows[0];
+    this.lockedTripRates.set(viajeGuardado.id, tarifaInicioCOP);
 
-    // 5. UPDATE REAL en monopatines en PostgreSQL Neon
+    // 6. UPDATE REAL en monopatines en PostgreSQL Neon
     await this.dataSource.query(
       `UPDATE monopatines SET estado = 'en uso', updated_at = NOW() WHERE id = $1;`,
       [scooter.id],
     );
 
-    // 6. Enviar orden electrónica de desbloqueo al candado IoT vía WebSockets
+    // 7. Enviar orden electrónica de desbloqueo al candado IoT vía WebSockets y actualizar flota
     await this.telemetryGateway.sendUnlockCommand(scooter.id);
+    await this.telemetryGateway.broadcastScooterSnapshot(scooter.id);
 
     return {
       statusCode: 201,
@@ -173,7 +179,7 @@ export class TripsService {
         viajeId: viajeGuardado.id,
         scooterId: scooter.id,
         inicioViaje: viajeGuardado.inicio_viaje,
-        tarifaMinutoCOP: this.DEFAULT_RATE_PER_MINUTE,
+        tarifaMinutoCOP: tarifaInicioCOP,
         estado: viajeGuardado.estado,
       },
     };
@@ -251,11 +257,14 @@ export class TripsService {
       this.telemetryGateway.sendLockCommand(scooterId);
     }
 
-    // 4. Calcular tiempo transcurrido, tarifa y posible multa por abandono (RN-07)
+    // 4. Calcular tiempo transcurrido, tarifa pactada al iniciar y posible multa por abandono (RN-07)
     const finViaje = new Date();
     const duracionMs = finViaje.getTime() - new Date(viaje.inicio_viaje).getTime();
     const duracionMinutos = Math.max(1, Math.ceil(duracionMs / (1000 * 60)));
-    const tarifaAplicada = Number(estacionParqueo.tarifa_minuto) || this.DEFAULT_RATE_PER_MINUTE;
+    const tarifaAplicada =
+      this.lockedTripRates.get(viaje.id) ??
+      Number(estacionParqueo.tarifa_minuto) ??
+      this.DEFAULT_RATE_PER_MINUTE;
     const multaCOP = esAbandonoFueraDeZona ? this.ABANDONMENT_PENALTY_COP : 0;
     const costoTotal = duracionMinutos * tarifaAplicada + multaCOP;
 
@@ -282,23 +291,30 @@ export class TripsService {
        RETURNING id, usuario_id, monopatin_id, inicio_viaje, fin_viaje, duracion_minutos, costo_total, foto_evidencia_url, estado;`,
       [duracionMinutos, costoTotal, dto.fotoEvidenciaUrl, dto.viajeId],
     );
-    const viajeActualizado = updateViajeRows[0];
+    const viajeActualizado = this.extractFirstRow<any>(updateViajeRows);
 
-    // 7. UPDATE REAL en monopatines ('bloqueado' si quedó abandonado fuera de estación, 'mantenimiento' si batería < 20, o 'disponible')
+    // 7. UPDATE REAL en monopatines ('bloqueado' si quedó abandonado, 'mantenimiento' si programado o batería < 20, o 'disponible')
+    const pendingMaint = this.telemetryGateway.isPendingMaintenance(scooterId);
     const updatedScooterRows = await this.dataSource.query(
       `UPDATE monopatines 
        SET estado = CASE 
              WHEN $2 = true THEN 'bloqueado'
-             WHEN nivel_bateria < 20 THEN 'mantenimiento'
+             WHEN $3 = true OR nivel_bateria < 20 THEN 'mantenimiento'
              ELSE 'disponible'
            END,
            velocidad_actual = 0.00,
            updated_at = NOW()
        WHERE id = $1
        RETURNING id, estado, nivel_bateria;`,
-      [scooterId, esAbandonoFueraDeZona],
+      [scooterId, esAbandonoFueraDeZona, pendingMaint],
     );
-    const scooterActual = updatedScooterRows[0];
+    const scooterActual = this.extractFirstRow<{ id: string; estado: string; nivel_bateria: number }>(
+      updatedScooterRows,
+    );
+
+    this.telemetryGateway.markPendingMaintenance(scooterId, false);
+    this.lockedTripRates.delete(viaje.id);
+    await this.telemetryGateway.broadcastScooterSnapshot(scooterId);
 
     return {
       statusCode: 200,
@@ -310,7 +326,7 @@ export class TripsService {
         scooterId: scooterId,
         estacionParqueo: estacionParqueo.nombre,
         inicioViaje: viaje.inicio_viaje,
-        finViaje: viajeActualizado.fin_viaje,
+        finViaje: viajeActualizado?.fin_viaje ?? finViaje,
         duracionMinutos,
         tarifaMinutoCOP: tarifaAplicada,
         multaCOP,
@@ -327,14 +343,39 @@ export class TripsService {
     };
   }
 
+  private extractFirstRow<T>(result: unknown): T | undefined {
+    if (!Array.isArray(result) || result.length === 0) return undefined;
+    const first = result[0];
+    return Array.isArray(first) ? (first[0] as T | undefined) : (first as T | undefined);
+  }
+
+  private async getCurrentBaseRatePerMinute(): Promise<number> {
+    try {
+      const rows: Array<{ tarifa_minuto: string | number }> = await this.dataSource.query(
+        `SELECT tarifa_minuto FROM zonas_geocercas WHERE tipo = 'normal' ORDER BY tarifa_minuto DESC LIMIT 1;`,
+      );
+      return Number(rows[0]?.tarifa_minuto) || this.DEFAULT_RATE_PER_MINUTE;
+    } catch {
+      return this.DEFAULT_RATE_PER_MINUTE;
+    }
+  }
+
   /**
    * Consultas auxiliares para la plataforma y frontend
    */
   async getActiveTripByUserId(usuarioId: string) {
-    return this.viajeRepo.findOne({
+    const viaje = await this.viajeRepo.findOne({
       where: { usuario_id: usuarioId, estado: 'activo' },
       relations: ['monopatin'],
     });
+    if (!viaje) return null;
+
+    const tarifaMinutoCOP =
+      this.lockedTripRates.get(viaje.id) ?? (await this.getCurrentBaseRatePerMinute());
+    return {
+      ...viaje,
+      tarifaMinutoCOP,
+    };
   }
 
   /**
@@ -355,7 +396,10 @@ export class TripsService {
       { estado: 'disponible', velocidad_actual: 0 },
     );
 
+    this.lockedTripRates.delete(viajeId);
+    this.telemetryGateway.markPendingMaintenance(viaje.monopatin_id, false);
     this.telemetryGateway.sendLockCommand(viaje.monopatin_id);
+    await this.telemetryGateway.broadcastScooterSnapshot(viaje.monopatin_id);
 
     return {
       statusCode: 200,
@@ -382,6 +426,7 @@ export class TripsService {
            END,
            updated_at = NOW();`,
     );
+    this.lockedTripRates.clear();
     this.telemetryGateway.resetAllRuntimes();
     return {
       statusCode: 200,
@@ -390,14 +435,40 @@ export class TripsService {
   }
 
   /**
-   * Consulta en tiempo real de la flota directamente desde PostgreSQL Neon
+   * Consulta en tiempo real de la flota directamente desde PostgreSQL Neon + PostGIS
    */
   async getAllScooters() {
     return this.dataSource.query(
-      `SELECT id, numero_serie, estado, nivel_bateria, velocidad_actual, 
-              ST_Y(ubicacion) as lat, ST_X(ubicacion) as lng, updated_at 
-       FROM monopatines 
-       ORDER BY id ASC;`,
+      `SELECT m.id, m.numero_serie, m.estado, m.nivel_bateria, m.velocidad_actual, 
+              ST_Y(m.ubicacion) AS lat, ST_X(m.ubicacion) AS lng, m.updated_at,
+              COALESCE(z.nombre, 'Fuera del Gran Malecón') AS zone_name,
+              COALESCE(z.tipo, 'prohibida') AS zone_type,
+              COALESCE(z.limite_velocidad, 0) AS limite_velocidad,
+              (z.id IS NOT NULL AND z.tipo <> 'prohibida') AS inside_perimeter,
+              COALESCE(z.tipo = 'parqueo', false) AS is_parking_zone,
+              (z.id IS NULL OR z.tipo = 'prohibida') AS out_of_zone
+       FROM monopatines m
+       LEFT JOIN LATERAL (
+         SELECT id, nombre, tipo, limite_velocidad
+         FROM zonas_geocercas
+         WHERE ST_Contains(poligono, m.ubicacion)
+         ORDER BY CASE
+           WHEN tipo = 'prohibida' THEN 1
+           WHEN tipo = 'peatonal' THEN 2
+           WHEN tipo = 'parqueo' THEN 3
+           WHEN tipo = 'normal' THEN 4
+           ELSE 5 END
+         LIMIT 1
+       ) z ON TRUE
+       ORDER BY m.id ASC;`,
+    );
+  }
+
+  async getPublicZones() {
+    return this.dataSource.query(
+      `SELECT id, nombre, tipo, limite_velocidad, tarifa_minuto
+       FROM zonas_geocercas
+       ORDER BY tipo ASC, nombre ASC;`,
     );
   }
 

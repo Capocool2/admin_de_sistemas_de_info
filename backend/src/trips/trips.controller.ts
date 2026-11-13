@@ -10,12 +10,16 @@ import {
   HttpStatus,
   ValidationPipe,
   UsePipes,
+  UseGuards,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { TripsService } from './trips.service';
 import { StartTripDto } from './dto/start-trip.dto';
 import { EndTripDto } from './dto/end-trip.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('api/trips')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
@@ -77,23 +81,41 @@ export class TripsController {
   }
 
   /**
-   * Endpoint: Forzar cancelación de un viaje activo (para desarrollo)
+   * Endpoint: Forzar cancelación de un viaje activo (Solo Admin)
    * POST /api/trips/force-cancel/:viajeId
    */
   @Post('force-cancel/:viajeId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @HttpCode(HttpStatus.OK)
   async forceCancel(@Param('viajeId') viajeId: string) {
     return this.tripsService.forceCancelTrip(viajeId);
   }
 
   /**
-   * Endpoint: Reseteo rápido del estado de viajes y flota (para pruebas de desarrollo)
+   * Endpoint: Reseteo rápido del estado de viajes y flota (Solo Admin)
    * POST /api/trips/reset-dev
    */
   @Post('reset-dev')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @HttpCode(HttpStatus.OK)
   async resetDev() {
     return this.tripsService.resetDevState();
+  }
+
+  /**
+   * Endpoint: Obtener configuración pública de zonas geocercas (velocidad/tarifa)
+   * GET /api/trips/zones
+   */
+  @Get('zones')
+  async getPublicZones() {
+    const zones = await this.tripsService.getPublicZones();
+    return {
+      statusCode: HttpStatus.OK,
+      total: zones.length,
+      data: zones,
+    };
   }
 
   /**
@@ -111,10 +133,12 @@ export class TripsController {
   }
 
   /**
-   * Endpoint: Historial de viajes
+   * Endpoint: Historial de viajes (Solo Admin)
    * GET /api/trips
    */
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   async getAllTrips() {
     const trips = await this.tripsService.getAllTrips();
     return {

@@ -1,61 +1,313 @@
 // frontend/src/views/AdminDashboard.tsx
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import {
-  ShieldAlert,
   Activity,
-  Battery,
-  AlertTriangle,
+  Banknote,
+  ChevronDown,
+  Map as MapIcon,
   RefreshCw,
-  LogOut,
+  Users,
+  Wrench,
 } from 'lucide-react';
 import { getSocket, joinRoom } from '../services/socket';
-import { resetDevTrips, getScooters } from '../services/api';
-import { SecurityAlert, TelemetryBroadcast, AuthUser } from '../types';
+import {
+  attendAdminAlert,
+  clearAdminScooterLock,
+  forceCancelTrip,
+  getAdminAlerts,
+  getAdminFleet,
+  getAdminSummary,
+  getAdminUsers,
+  getAdminZones,
+  getAllTrips,
+  relocateAdminScooter,
+  resetDevTrips,
+  sendAdminScooterNotice,
+  updateAdminScooterStatus,
+  updateAdminUserStatus,
+  updateAdminZone,
+} from '../services/api';
+import {
+  AdminFleetUnit,
+  AdminSummary,
+  AdminTripRecord,
+  AdminUserRecord,
+  AdminZoneRecord,
+  AuthUser,
+  ScooterState,
+  SecurityAlert,
+  TelemetryBroadcast,
+} from '../types';
+import { evaluateGeofence, MALECON_GEOFENCES } from '../utils/geofence';
+import { AdminFleetPanel, FleetFilter } from '../components/admin/AdminFleetPanel';
+import { AdminScooterDrawer } from '../components/admin/AdminScooterDrawer';
+import { AdminAlertsPanel } from '../components/admin/AdminAlertsPanel';
+import { AdminTripsTab } from '../components/admin/AdminTripsTab';
+import { AdminUsersZonesTab } from '../components/admin/AdminUsersZonesTab';
 
 interface AdminDashboardProps {
   currentUser?: AuthUser | null;
   onLogout?: () => void;
 }
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onLogout }) => {
+type AdminTab = 'map' | 'trips' | 'accounts';
+
+function buildAlertMessage(tipo: string, scooterId: string): string {
+  switch (tipo) {
+    case 'fuera_perimetro':
+      return `${scooterId} salió del perímetro autorizado del Gran Malecón o fue abandonado fuera de estación.`;
+    case 'robo':
+      return `Movimiento no autorizado detectado con candado bloqueado en ${scooterId}.`;
+    case 'bateria_baja':
+      return `Batería crítica (<15%) en ${scooterId}. Requiere recogida o recarga.`;
+    case 'caida':
+      return `Posible caída o impacto reportado en ${scooterId}.`;
+    default:
+      return `Alerta operativa registrada para ${scooterId}.`;
+  }
+}
+
+function buildScooterMarkerHtml(unit: AdminFleetUnit): string {
+  const shortCode = unit.scooterId.replace('SCOOTER-', 'S');
+  const isOut = Boolean(unit.outOfPerimeter);
+  const isBlocked = unit.estado === 'bloqueado';
+  const isMaint = unit.estado === 'mantenimiento';
+  const isInUse = unit.estado === 'en uso';
+
+  const circleColor = isOut || isBlocked
+    ? 'bg-rose-600 shadow-rose-500/70'
+    : isMaint
+    ? 'bg-amber-500 shadow-amber-500/60'
+    : isInUse
+    ? 'bg-cyan-500 shadow-cyan-400/60'
+    : 'bg-emerald-500 shadow-emerald-400/50';
+
+  const pulseRing = isOut
+    ? '<span class="absolute w-11 h-11 rounded-full bg-rose-600/45 animate-ping"></span>'
+    : isInUse
+    ? '<span class="absolute w-10 h-10 rounded-full bg-cyan-400/35 animate-ping"></span>'
+    : '';
+
+  const tag = isOut
+    ? '<span class="mt-0.5 px-1.5 py-0.2 rounded bg-rose-700 text-white text-[8px] font-extrabold tracking-wide border border-rose-200 shadow-lg whitespace-nowrap">FUERA DE ZONA</span>'
+    : isBlocked
+    ? '<span class="mt-0.5 px-1 py-0.2 rounded bg-rose-900 text-rose-100 text-[8px] font-bold border border-rose-400 shadow whitespace-nowrap">BLOQUEADO</span>'
+    : isMaint
+    ? '<span class="mt-0.5 px-1 py-0.2 rounded bg-amber-600 text-white text-[8px] font-bold border border-amber-200 shadow whitespace-nowrap">MANT.</span>'
+    : '';
+
+  return `
+    <div class="relative flex flex-col items-center justify-center" style="width:96px;margin-left:-34px;margin-top:-14px;">
+      <div class="relative flex items-center justify-center w-8 h-8">
+        ${pulseRing}
+        <div class="relative w-7 h-7 rounded-full ${circleColor} shadow-md border-2 border-white flex items-center justify-center text-white text-[10px] font-bold">
+          ${shortCode}
+        </div>
+      </div>
+      ${tag}
+    </div>
+  `;
+}
+
+function buildScooterPopupHtml(unit: AdminFleetUnit): string {
+  const statusLabel = unit.outOfPerimeter
+    ? '<span class="text-rose-400 font-bold">FUERA DE ZONA (Bloqueado)</span>'
+    : unit.estado === 'bloqueado'
+    ? '<span class="text-rose-400 font-bold">Bloqueado</span>'
+    : unit.estado === 'mantenimiento'
+    ? '<span class="text-amber-400 font-bold">En Mantenimiento</span>'
+    : unit.estado === 'en uso'
+    ? '<span class="text-cyan-400 font-bold">En Ruta</span>'
+    : '<span class="text-emerald-400 font-bold">Disponible</span>';
+
+  return `
+    <div class="text-xs space-y-0.5">
+      <p class="font-bold text-sm text-cyan-400">${unit.scooterId}</p>
+      <p>Estado: ${statusLabel}</p>
+      <p>Zona: <strong>${unit.zoneName}</strong></p>
+      ${unit.activeRiderName ? `<p>Turista: <strong>${unit.activeRiderName}</strong></p>` : ''}
+      <p>Velocidad: <strong>${unit.speed} km/h</strong></p>
+      <p>Batería: <strong>${unit.battery}%</strong></p>
+    </div>
+  `;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<{ [key: string]: L.Marker }>({});
+  const fleetRef = useRef<{ [id: string]: AdminFleetUnit }>({});
+  const followScooterIdRef = useRef<string | null>(null);
 
-  const [fleet, setFleet] = useState<{ [id: string]: TelemetryBroadcast }>({});
+  const [activeTab, setActiveTab] = useState<AdminTab>('map');
+  const [fleet, setFleet] = useState<{ [id: string]: AdminFleetUnit }>({});
   const [alerts, setAlerts] = useState<SecurityAlert[]>([]);
+  const [pendingAlertsDbCount, setPendingAlertsDbCount] = useState(0);
+  const [fleetFilter, setFleetFilter] = useState<FleetFilter>('all');
+  const [selectedScooterId, setSelectedScooterId] = useState<string | null>(null);
+  const [followScooterId, setFollowScooterId] = useState<string | null>(null);
 
-  // Cargar flota real desde PostgreSQL Neon al iniciar
-  useEffect(() => {
-    getScooters()
-      .then((list: any[]) => {
-        if (list && list.length > 0) {
-          const liveFleet: { [id: string]: TelemetryBroadcast } = {};
-          list.forEach((scooter) => {
-            liveFleet[scooter.id] = {
-              scooterId: scooter.id,
-              lat: Number(scooter.lat) || 11.0182,
-              lng: Number(scooter.lng) || -74.7952,
-              speed: Number(scooter.velocidad_actual) || 0,
-              battery: Number(scooter.nivel_bateria) || 100,
-              locked: scooter.estado !== 'en uso',
-              zoneName: 'Gran Malecón (Neon DB)',
-              timestamp: scooter.updated_at || new Date().toISOString(),
-            };
-          });
-          setFleet(liveFleet);
-        }
-      })
-      .catch((err) => console.log('Error cargando flota desde BD:', err));
+  const [trips, setTrips] = useState<AdminTripRecord[]>([]);
+  const [summary, setSummary] = useState<AdminSummary | null>(null);
+  const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const [zones, setZones] = useState<AdminZoneRecord[]>([]);
+
+  const [isBusy, setIsBusy] = useState(false);
+  const [showDevMenu, setShowDevMenu] = useState(false);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  fleetRef.current = fleet;
+  followScooterIdRef.current = followScooterId;
+
+  const showToast = useCallback((type: 'success' | 'error', text: string) => {
+    setToast({ type, text });
+    window.setTimeout(() => {
+      setToast((prev) => (prev?.text === text ? null : prev));
+    }, 4500);
   }, []);
 
-  // 1. Inicializar mapa Leaflet con OpenStreetMap (Sin API Key, libre de marcas de agua)
+  const syncMarkerOnMap = useCallback((unit: AdminFleetUnit) => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    const customIcon = L.divIcon({
+      className: 'admin-marker-wrapper',
+      html: buildScooterMarkerHtml(unit),
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+    });
+    const popupHtml = buildScooterPopupHtml(unit);
+
+    if (markersRef.current[unit.scooterId]) {
+      markersRef.current[unit.scooterId].setLatLng([unit.lat, unit.lng]);
+      markersRef.current[unit.scooterId].setIcon(customIcon);
+      markersRef.current[unit.scooterId].setPopupContent(popupHtml);
+    } else {
+      const marker = L.marker([unit.lat, unit.lng], { icon: customIcon }).addTo(map);
+      marker.bindPopup(popupHtml);
+      marker.on('click', () => {
+        setSelectedScooterId(unit.scooterId);
+      });
+      markersRef.current[unit.scooterId] = marker;
+    }
+  }, []);
+
+  const loadFleetFromServer = useCallback(async () => {
+    try {
+      const list = await getAdminFleet();
+      if (!Array.isArray(list)) return;
+
+      const nextFleet: { [id: string]: AdminFleetUnit } = {};
+      list.forEach((row: any) => {
+        const lat = Number(row.lat) || 11.0182;
+        const lng = Number(row.lng) || -74.7952;
+        const localGeo = evaluateGeofence(lat, lng);
+        const outOfPerimeter =
+          typeof row.out_of_zone === 'boolean'
+            ? row.out_of_zone
+            : !localGeo.insidePerimeter;
+        const estado = (row.estado || 'disponible') as ScooterState;
+
+        const unit: AdminFleetUnit = {
+          scooterId: row.id,
+          numero_serie: row.numero_serie,
+          lat,
+          lng,
+          speed: Number(row.velocidad_actual) || 0,
+          battery: Number(row.nivel_bateria) ?? 100,
+          locked: estado !== 'en uso',
+          estado,
+          zoneName: outOfPerimeter
+            ? 'Fuera del Gran Malecón'
+            : row.zone_name || localGeo.zoneName,
+          zoneType: outOfPerimeter ? 'prohibida' : row.zone_type || localGeo.zoneType,
+          maxSpeed: outOfPerimeter
+            ? 0
+            : Number(row.limite_velocidad) || localGeo.maxSpeed,
+          isInsideParkingZone: Boolean(row.is_parking_zone ?? localGeo.isParkingZone),
+          outOfPerimeter,
+          emergencyStopped: outOfPerimeter || estado === 'bloqueado',
+          activeTripId: row.active_trip_id || null,
+          activeTripStart: row.active_trip_start || null,
+          activeRiderName: row.active_rider_name || null,
+          pendingAlertsCount: Number(row.pending_alerts_count) || 0,
+          pendingMaintenance: Boolean(row.pending_maintenance),
+          timestamp: row.updated_at || new Date().toISOString(),
+        };
+
+        nextFleet[unit.scooterId] = unit;
+        syncMarkerOnMap(unit);
+      });
+
+      setFleet(nextFleet);
+    } catch (err) {
+      console.error('Error cargando flota admin:', err);
+    }
+  }, [syncMarkerOnMap]);
+
+  const loadAlertsFromServer = useCallback(async () => {
+    try {
+      const res = await getAdminAlerts();
+      const rows = res?.alerts || [];
+      const mapped: SecurityAlert[] = rows.map((row: any) => ({
+        id: row.id,
+        dbId: row.id,
+        type: row.tipo_alerta || 'fuera_perimetro',
+        scooterId: row.monopatin_id,
+        lat: row.lat ? Number(row.lat) : undefined,
+        lng: row.lng ? Number(row.lng) : undefined,
+        status: row.estado || 'pendiente',
+        message: buildAlertMessage(row.tipo_alerta, row.monopatin_id),
+        timestamp: row.created_at
+          ? new Date(row.created_at).toLocaleTimeString()
+          : new Date().toLocaleTimeString(),
+      }));
+      setAlerts(mapped);
+      setPendingAlertsDbCount(
+        typeof res?.pendingCount === 'number'
+          ? res.pendingCount
+          : mapped.filter((a) => a.status !== 'atendida').length,
+      );
+    } catch (err) {
+      console.error('Error cargando alertas admin:', err);
+    }
+  }, []);
+
+  const loadSecondaryData = useCallback(async () => {
+    const [tripsList, summaryData, usersList, zonesList] = await Promise.all([
+      getAllTrips(),
+      getAdminSummary(),
+      getAdminUsers(),
+      getAdminZones(),
+    ]);
+    setTrips(tripsList || []);
+    setSummary(summaryData);
+    setUsers(usersList || []);
+    setZones(zonesList || []);
+  }, []);
+
+  // Carga inicial completa
+  useEffect(() => {
+    loadFleetFromServer();
+    loadAlertsFromServer();
+    loadSecondaryData();
+  }, [loadFleetFromServer, loadAlertsFromServer, loadSecondaryData]);
+
+  // Refrescar datos secundarios al cambiar a Viajes o Cuentas
+  useEffect(() => {
+    if (activeTab === 'map') {
+      window.setTimeout(() => mapInstanceRef.current?.invalidateSize(), 80);
+    } else {
+      loadSecondaryData();
+    }
+  }, [activeTab, loadSecondaryData]);
+
+  // 1. Inicializar mapa Leaflet con OpenStreetMap y geocercas oficiales
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    // Destruir instancia previa para evitar error "Map container is already initialized"
     if (mapInstanceRef.current) {
       mapInstanceRef.current.remove();
       mapInstanceRef.current = null;
@@ -67,7 +319,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       zoomControl: true,
     });
 
-    // Capa OpenStreetMap con filtro oscuro elegante (Sin API Key ni restricciones)
     const osmDark = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution:
@@ -75,163 +326,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       className: 'map-tiles-dark',
     });
 
-    // Capa OpenStreetMap estándar original (Modo Claro)
     const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution:
         '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
     });
 
-    // Iniciar con la capa oscura por defecto
     osmDark.addTo(map);
-
-    // Control para alternar capas libremente sin necesidad de credenciales
     L.control
       .layers(
         {
-          '🌙 Modo Oscuro (Sin API Key)': osmDark,
+          '🌙 Modo Oscuro': osmDark,
           '☀️ Modo Estándar OSM': osmStandard,
         },
         undefined,
-        { position: 'topright' }
+        { position: 'topright' },
       )
       .addTo(map);
 
-    // Geocercas Operativas del Gran Malecón
-    // A. Perímetro Operativo Autorizado
-    const perimeterCoords: [number, number][] = [
-      [11.0170, -74.7975],
-      [11.0210, -74.7940],
-      [11.0140, -74.7890],
-      [11.0120, -74.7935],
-    ];
+    MALECON_GEOFENCES.forEach((geo) => {
+      let color = '#38bdf8';
+      let fillColor = '#0284c7';
+      let fillOpacity = 0.1;
 
-    L.polygon(perimeterCoords, {
-      color: '#38bdf8',
-      weight: 2,
-      fillColor: '#0284c7',
-      fillOpacity: 0.1,
-    })
-      .addTo(map)
-      .bindTooltip('Perímetro Operativo Autorizado Gran Malecón');
-
-    // B. Paseo Peatonal Caimán del Río (Límite 10 km/h)
-    L.polygon(
-      [
-        [11.0170, -74.7945],
-        [11.0145, -74.7925],
-        [11.0152, -74.7915],
-        [11.0177, -74.7935],
-      ],
-      {
-        color: '#d97706',
-        weight: 2,
-        fillColor: '#f59e0b',
-        fillOpacity: 0.2,
+      if (geo.tipo === 'peatonal') {
+        color = '#d97706';
+        fillColor = '#f59e0b';
+        fillOpacity = 0.2;
+      } else if (geo.tipo === 'parqueo') {
+        color = '#059669';
+        fillColor = '#10b981';
+        fillOpacity = 0.35;
       }
-    )
-      .addTo(map)
-      .bindTooltip('Paseo Peatonal Caimán del Río (Límite: 10 km/h)');
 
-    // C. Estación de Parqueo P1 (Puerta de Oro)
-    L.polygon(
-      [
-        [11.0180, -74.7960],
-        [11.0180, -74.7950],
-        [11.0195, -74.7950],
-        [11.0195, -74.7960],
-      ],
-      {
-        color: '#059669',
+      L.polygon(geo.coordinates, {
+        color,
         weight: 2,
-        fillColor: '#10b981',
-        fillOpacity: 0.35,
-      }
-    )
-      .addTo(map)
-      .bindTooltip('Estación Parqueo P1 - Puerta de Oro');
-
-    // D. Estación de Parqueo P2 (Caimán del Río)
-    L.polygon(
-      [
-        [11.0145, -74.7930],
-        [11.0145, -74.7920],
-        [11.0155, -74.7920],
-        [11.0155, -74.7930],
-      ],
-      {
-        color: '#059669',
-        weight: 2,
-        fillColor: '#10b981',
-        fillOpacity: 0.35,
-      }
-    )
-      .addTo(map)
-      .bindTooltip('Estación Parqueo P2 - Caimán del Río');
-
-    // E. Estación de Parqueo P3 (Manglar / Pabellón de Cristal)
-    L.polygon(
-      [
-        [11.0160, -74.7945],
-        [11.0160, -74.7935],
-        [11.0170, -74.7935],
-        [11.0170, -74.7945],
-      ],
-      {
-        color: '#059669',
-        weight: 2,
-        fillColor: '#10b981',
-        fillOpacity: 0.35,
-      }
-    )
-      .addTo(map)
-      .bindTooltip('Estación Parqueo P3 - Manglar');
+        fillColor,
+        fillOpacity,
+      })
+        .addTo(map)
+        .bindTooltip(geo.nombre);
+    });
 
     mapInstanceRef.current = map;
 
-    // Cargar marcadores iniciales de toda la flota desde PostgreSQL Neon
-    getScooters()
-      .then((list: any[]) => {
-        if (list && list.length > 0 && mapInstanceRef.current) {
-          list.forEach((scooter) => {
-            const lat = Number(scooter.lat);
-            const lng = Number(scooter.lng);
-            if (lat && lng && !markersRef.current[scooter.id]) {
-              const isLocked = scooter.estado !== 'en uso';
-              const markerHtml = `
-                <div class="relative flex items-center justify-center w-8 h-8">
-                  <div class="w-7 h-7 rounded-full ${
-                    !isLocked
-                      ? 'bg-cyan-500 shadow-cyan-400/50 animate-pulse'
-                      : 'bg-emerald-500 shadow-emerald-400/50'
-                  } shadow-md border border-white flex items-center justify-center text-white text-[10px] font-bold">
-                    ${scooter.id.replace('SCOOTER-', 'S')}
-                  </div>
-                </div>
-              `;
-              const customIcon = L.divIcon({
-                className: 'admin-marker',
-                html: markerHtml,
-                iconSize: [28, 28],
-                iconAnchor: [14, 14],
-              });
-              const marker = L.marker([lat, lng], { icon: customIcon }).addTo(mapInstanceRef.current!);
-              marker.bindPopup(`
-                <div class="text-xs">
-                  <p class="font-bold text-sm text-cyan-400">${scooter.id}</p>
-                  <p>Estado: <strong>${scooter.estado}</strong></p>
-                  <p>Velocidad: <strong>${scooter.velocidad_actual} km/h</strong></p>
-                  <p>Batería: <strong>${scooter.nivel_bateria}%</strong></p>
-                </div>
-              `);
-              markersRef.current[scooter.id] = marker;
-            }
-          });
-        }
-      })
-      .catch((err) => console.log('Error cargando marcadores iniciales:', err));
+    // Renderizar cualquier unidad ya cargada antes de terminar el montaje del mapa
+    Object.values(fleetRef.current).forEach((u) => syncMarkerOnMap(u));
 
-    // Arreglar cuadros grises y tiles rotos al inicializar o cambiar pestañas
     const timer = setTimeout(() => {
       map.invalidateSize();
     }, 250);
@@ -239,323 +381,592 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
     const resizeObserver = new ResizeObserver(() => {
       map.invalidateSize();
     });
-    if (mapContainerRef.current) {
-      resizeObserver.observe(mapContainerRef.current);
-    }
+    resizeObserver.observe(mapContainerRef.current);
 
     return () => {
       clearTimeout(timer);
       resizeObserver.disconnect();
+      markersRef.current = {};
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
       }
     };
-  }, []);
+  }, [syncMarkerOnMap]);
 
   // 2. Escuchar eventos en vivo del WebSocket
   useEffect(() => {
     const socket = getSocket();
-    joinRoom('dashboard');
+    const handleConnect = () => {
+      joinRoom('dashboard');
+    };
+    handleConnect();
+    socket.on('connect', handleConnect);
 
     const handleTelemetry = (data: TelemetryBroadcast) => {
+      const localGeo = evaluateGeofence(data.lat, data.lng);
+      const outOfPerimeter =
+        typeof data.outOfPerimeter === 'boolean'
+          ? data.outOfPerimeter
+          : data.zoneType === 'prohibida' || !localGeo.insidePerimeter;
+
+      const prevUnit = fleetRef.current[data.scooterId];
+      const nextEstado: ScooterState =
+        data.estado ||
+        (outOfPerimeter
+          ? 'bloqueado'
+          : data.emergencyStopped
+          ? 'bloqueado'
+          : !data.locked
+          ? 'en uso'
+          : prevUnit?.estado === 'mantenimiento'
+          ? 'mantenimiento'
+          : 'disponible');
+
+      const merged: AdminFleetUnit = {
+        ...prevUnit,
+        ...data,
+        estado: nextEstado,
+        zoneName: outOfPerimeter
+          ? 'Fuera del Gran Malecón'
+          : data.zoneName || localGeo.zoneName,
+        zoneType: outOfPerimeter ? 'prohibida' : data.zoneType || localGeo.zoneType,
+        outOfPerimeter,
+        emergencyStopped: outOfPerimeter || nextEstado === 'bloqueado',
+        pendingMaintenance:
+          typeof data.pendingMaintenance === 'boolean'
+            ? data.pendingMaintenance
+            : prevUnit?.pendingMaintenance,
+        activeTripId:
+          nextEstado === 'disponible' || nextEstado === 'mantenimiento'
+            ? null
+            : prevUnit?.activeTripId,
+        activeRiderName:
+          nextEstado === 'disponible' || nextEstado === 'mantenimiento'
+            ? null
+            : prevUnit?.activeRiderName,
+      };
+
       setFleet((prev) => ({
         ...prev,
-        [data.scooterId]: data,
+        [data.scooterId]: merged,
       }));
+      syncMarkerOnMap(merged);
 
-      if (!mapInstanceRef.current) return;
+      if (followScooterIdRef.current === data.scooterId && mapInstanceRef.current) {
+        mapInstanceRef.current.panTo([data.lat, data.lng], {
+          animate: true,
+          duration: 0.35,
+        });
+      }
 
-      const { scooterId, lat, lng, speed, battery, locked, emergencyStopped } = data;
-      const isLocked = locked;
-      const isAlarmed = Boolean(emergencyStopped);
-
-      const markerHtml = `
-        <div class="relative flex items-center justify-center w-8 h-8">
-          <div class="w-7 h-7 rounded-full ${
-            isAlarmed
-              ? 'bg-rose-600 shadow-rose-500/70 animate-ping'
-              : !isLocked
-              ? 'bg-cyan-500 shadow-cyan-400/50 animate-pulse'
-              : 'bg-emerald-500 shadow-emerald-400/50'
-          } shadow-md border border-white flex items-center justify-center text-white text-[10px] font-bold">
-            ${scooterId.replace('SCOOTER-', 'S')}
-          </div>
-        </div>
-      `;
-
-      const customIcon = L.divIcon({
-        className: 'admin-marker',
-        html: markerHtml,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-      });
-
-      const popupHtml = `
-        <div class="text-xs">
-          <p class="font-bold text-sm text-cyan-400">${scooterId}</p>
-          <p>Estado: <strong>${isAlarmed ? 'Bloqueado (Alarma)' : isLocked ? 'Disponible' : 'En uso'}</strong></p>
-          <p>Velocidad: <strong>${speed} km/h</strong></p>
-          <p>Batería: <strong>${battery}%</strong></p>
-        </div>
-      `;
-
-      if (markersRef.current[scooterId]) {
-        markersRef.current[scooterId].setLatLng([lat, lng]);
-        markersRef.current[scooterId].setIcon(customIcon);
-        markersRef.current[scooterId].setPopupContent(popupHtml);
-      } else {
-        const marker = L.marker([lat, lng], { icon: customIcon }).addTo(mapInstanceRef.current);
-        marker.bindPopup(popupHtml);
-        markersRef.current[scooterId] = marker;
+      // Si cambió si está en uso vs disponible, sincronizamos el nombre del turista activo desde BD
+      if (prevUnit && prevUnit.estado !== nextEstado) {
+        loadFleetFromServer();
       }
     };
 
-    const handleSecurityAlert = (data: any) => {
+    const upsertLiveAlert = (incoming: any, fallbackType: SecurityAlert['type']) => {
       const newAlert: SecurityAlert = {
-        id: `alert-${Date.now()}`,
-        type: data.type || 'robo',
-        scooterId: data.scooterId,
-        lat: data.lat,
-        lng: data.lng,
-        speed: data.speed,
-        message: data.message || 'Alerta de seguridad generada por el servidor',
+        id: incoming.alertId || `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        dbId: incoming.alertId,
+        type: incoming.type || fallbackType,
+        scooterId: incoming.scooterId,
+        lat: incoming.lat ? Number(incoming.lat) : undefined,
+        lng: incoming.lng ? Number(incoming.lng) : undefined,
+        speed: incoming.speed,
+        status: 'pendiente',
+        message:
+          incoming.message ||
+          buildAlertMessage(incoming.type || fallbackType, incoming.scooterId),
         timestamp: new Date().toLocaleTimeString(),
       };
-      setAlerts((prev) => [newAlert, ...prev.slice(0, 15)]);
+
+      setAlerts((prev) => {
+        if (newAlert.dbId && prev.some((a) => a.dbId === newAlert.dbId)) {
+          return prev;
+        }
+        return [newAlert, ...prev.slice(0, 60)];
+      });
+      setPendingAlertsDbCount((prev) => prev + 1);
     };
 
-    const handleMaintenanceAlert = (data: any) => {
-      const newAlert: SecurityAlert = {
-        id: `alert-${Date.now()}`,
-        type: 'bateria_baja',
-        scooterId: data.scooterId,
-        message: data.message || 'Batería en nivel crítico (< 15%)',
-        timestamp: new Date().toLocaleTimeString(),
-      };
-      setAlerts((prev) => [newAlert, ...prev.slice(0, 15)]);
-    };
+    const handleSecurityAlert = (data: any) => upsertLiveAlert(data, 'robo');
+    const handleMaintenanceAlert = (data: any) => upsertLiveAlert(data, 'bateria_baja');
 
     const handleResetEvent = () => {
-      setAlerts([]);
-      getScooters()
-        .then((list: any[]) => {
-          if (!list || list.length === 0) return;
-          const liveFleet: { [id: string]: TelemetryBroadcast } = {};
-          list.forEach((scooter) => {
-            const lat = Number(scooter.lat) || 11.0182;
-            const lng = Number(scooter.lng) || -74.7952;
-            const speed = Number(scooter.velocidad_actual) || 0;
-            const battery = Number(scooter.nivel_bateria) || 100;
-            const locked = scooter.estado !== 'en uso';
-            liveFleet[scooter.id] = {
-              scooterId: scooter.id,
-              lat,
-              lng,
-              speed,
-              battery,
-              locked,
-              zoneName: 'Gran Malecón (Neon DB)',
-              timestamp: scooter.updated_at || new Date().toISOString(),
-            };
-            markersRef.current[scooter.id]?.setLatLng([lat, lng]);
-          });
-          setFleet(liveFleet);
-        })
-        .catch(() => {});
+      setSelectedScooterId(null);
+      setFollowScooterId(null);
+      loadFleetFromServer();
+      loadAlertsFromServer();
+      loadSecondaryData();
     };
+
+    const handleAlertsUpdated = () => loadAlertsFromServer();
+    const handleZonesUpdated = () => loadSecondaryData();
 
     socket.on('telemetry:broadcast', handleTelemetry);
     socket.on('alert:security', handleSecurityAlert);
     socket.on('alert:maintenance', handleMaintenanceAlert);
     socket.on('scooter:reset', handleResetEvent);
+    socket.on('alerts:updated', handleAlertsUpdated);
+    socket.on('zones:updated', handleZonesUpdated);
 
     return () => {
+      socket.off('connect', handleConnect);
       socket.off('telemetry:broadcast', handleTelemetry);
       socket.off('alert:security', handleSecurityAlert);
       socket.off('alert:maintenance', handleMaintenanceAlert);
       socket.off('scooter:reset', handleResetEvent);
+      socket.off('alerts:updated', handleAlertsUpdated);
+      socket.off('zones:updated', handleZonesUpdated);
     };
-  }, []);
+  }, [loadAlertsFromServer, loadFleetFromServer, loadSecondaryData, syncMarkerOnMap]);
+
+  // Handlers de acciones administrativas
+  const handleSelectScooter = (unit: AdminFleetUnit) => {
+    setSelectedScooterId(unit.scooterId);
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([unit.lat, unit.lng], 17, { duration: 0.45 });
+      markersRef.current[unit.scooterId]?.openPopup();
+    }
+  };
+
+  const handleToggleFollow = (scooterId: string) => {
+    setFollowScooterId((prev) => {
+      const next = prev === scooterId ? null : scooterId;
+      if (next && fleet[next] && mapInstanceRef.current) {
+        mapInstanceRef.current.flyTo([fleet[next].lat, fleet[next].lng], 17, { duration: 0.4 });
+      }
+      return next;
+    });
+  };
+
+  const handleLocateAlert = (al: SecurityAlert) => {
+    const unit = fleet[al.scooterId];
+    const targetLat = al.lat ?? unit?.lat;
+    const targetLng = al.lng ?? unit?.lng;
+    if (targetLat && targetLng && mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([targetLat, targetLng], 18, { duration: 0.5 });
+    }
+    if (unit) {
+      setSelectedScooterId(unit.scooterId);
+      markersRef.current[unit.scooterId]?.openPopup();
+    }
+  };
+
+  const handleAttendAlert = async (al: SecurityAlert) => {
+    if (!al.dbId) {
+      setAlerts((prev) =>
+        prev.map((item) => (item.id === al.id ? { ...item, status: 'atendida' } : item)),
+      );
+      setPendingAlertsDbCount((prev) => Math.max(0, prev - 1));
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const res = await attendAdminAlert(al.dbId);
+      showToast('success', res.message || 'Alerta marcada como atendida');
+      await loadAlertsFromServer();
+    } catch (err: any) {
+      showToast('error', err.message || 'No fue posible atender la alerta');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleRelocateScooter = async (scooterId: string, stationId: 'P1' | 'P2' | 'P3') => {
+    setIsBusy(true);
+    try {
+      const res = await relocateAdminScooter(scooterId, stationId, true);
+      showToast('success', res.message);
+      await Promise.all([loadFleetFromServer(), loadAlertsFromServer()]);
+    } catch (err: any) {
+      showToast('error', err.message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleChangeScooterStatus = async (
+    scooterId: string,
+    estado: 'disponible' | 'mantenimiento',
+    deferIfInUse = false,
+  ) => {
+    setIsBusy(true);
+    try {
+      const res = await updateAdminScooterStatus(scooterId, estado, deferIfInUse);
+      showToast('success', res.message);
+      await loadFleetFromServer();
+    } catch (err: any) {
+      showToast('error', err.message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleClearLock = async (scooterId: string) => {
+    setIsBusy(true);
+    try {
+      const res = await clearAdminScooterLock(scooterId);
+      showToast('success', res.message);
+      await Promise.all([loadFleetFromServer(), loadAlertsFromServer()]);
+    } catch (err: any) {
+      showToast('error', err.message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSendNotice = async (scooterId: string, message: string) => {
+    setIsBusy(true);
+    try {
+      const res = await sendAdminScooterNotice(scooterId, message);
+      showToast('success', res.message);
+    } catch (err: any) {
+      showToast('error', err.message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleForceCancelBlockedTrip = async (viajeId: string, scooterId: string) => {
+    if (
+      !window.confirm(
+        `¿Cerrar el viaje bloqueado de ${scooterId} sin aplicar multa manual adicional? Después podrás recolocar la unidad en una estación.`,
+      )
+    ) {
+      return;
+    }
+    setIsBusy(true);
+    try {
+      const res = await forceCancelTrip(viajeId);
+      showToast('success', res.message || `Viaje en ${scooterId} cerrado`);
+      await loadFleetFromServer();
+    } catch (err: any) {
+      showToast('error', err.message || 'No fue posible cerrar el viaje bloqueado');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleToggleUserStatus = async (user: AdminUserRecord) => {
+    const nextStatus = user.estado === 'activo' ? 'bloqueado' : 'activo';
+    const actionLabel = nextStatus === 'bloqueado' ? 'suspender' : 'habilitar';
+    if (!window.confirm(`¿Deseas ${actionLabel} la cuenta de ${user.nombre_completo}?`)) {
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const res = await updateAdminUserStatus(user.id, nextStatus);
+      showToast('success', res.message);
+      await loadSecondaryData();
+    } catch (err: any) {
+      showToast('error', err.message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSaveZone = async (
+    zoneId: string,
+    payload: {
+      limite_velocidad?: number;
+      tarifa_minuto?: number;
+      applyRateToAllZones?: boolean;
+    },
+  ) => {
+    setIsBusy(true);
+    try {
+      const res = await updateAdminZone(zoneId, payload);
+      showToast('success', res.message);
+      await loadSecondaryData();
+    } catch (err: any) {
+      showToast('error', err.message);
+    } finally {
+      setIsBusy(false);
+    }
+  };
 
   const handleReset = async () => {
-    if (window.confirm('¿Deseas resetear los viajes y restablecer la flota a disponible?')) {
-      await resetDevTrips();
-      setAlerts([]);
-      alert('Ambiente reseteado: Monopatines en estado disponible.');
+    setShowDevMenu(false);
+    if (
+      window.confirm(
+        'HERRAMIENTA DEV: ¿Deseas reiniciar todos los viajes, pagos y alertas para pruebas y devolver la flota a disponible?',
+      )
+    ) {
+      setIsBusy(true);
+      try {
+        await resetDevTrips();
+        setSelectedScooterId(null);
+        setFollowScooterId(null);
+        await Promise.all([loadFleetFromServer(), loadAlertsFromServer(), loadSecondaryData()]);
+        showToast('success', 'Ambiente de pruebas reseteado correctamente.');
+      } catch (err: any) {
+        showToast('error', err.message || 'Error al resetear flota');
+      } finally {
+        setIsBusy(false);
+      }
     }
   };
 
   const fleetList = Object.values(fleet);
   const totalScooters = fleetList.length;
-  const inUseCount = fleetList.filter((s) => !s.locked).length;
-  const availableCount = totalScooters - inUseCount;
+  const availableCount = fleetList.filter(
+    (s) => s.estado === 'disponible' && !s.outOfPerimeter,
+  ).length;
+  const inUseCount = fleetList.filter(
+    (s) => s.estado === 'en uso' && !s.outOfPerimeter,
+  ).length;
+  const outOrBlockedCount = fleetList.filter(
+    (s) => s.outOfPerimeter || s.estado === 'bloqueado',
+  ).length;
+  const maintenanceCount = fleetList.filter(
+    (s) => s.estado === 'mantenimiento' || s.battery < 20,
+  ).length;
+  const pendingAlertsCount = Math.max(
+    pendingAlertsDbCount,
+    alerts.filter((a) => a.status !== 'atendida').length,
+  );
+
+  const selectedUnit = selectedScooterId ? fleet[selectedScooterId] || null : null;
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
-      {/* Top Navbar */}
-      <header className="h-14 border-b border-slate-800 bg-slate-900/90 px-4 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
+    <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden relative">
+      {/* Toast flotante de confirmación / error */}
+      {toast && (
+        <div
+          className={`fixed top-16 right-4 z-50 max-w-md px-4 py-2.5 rounded-xl border shadow-2xl text-xs font-semibold flex items-center gap-2 animate-fadeIn ${
+            toast.type === 'success'
+              ? 'bg-emerald-950/95 border-emerald-500/70 text-emerald-200'
+              : 'bg-rose-950/95 border-rose-500/70 text-rose-200'
+          }`}
+        >
+          <span>{toast.text}</span>
+        </div>
+      )}
+
+      {/* Sub-barra Operativa de Torre de Control */}
+      <header className="h-14 border-b border-slate-800 bg-slate-900/90 px-4 flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold shrink-0">
             ⚡
           </div>
-          <div>
+          <div className="hidden md:block">
             <h1 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
-              <span>SAME • Centro de Control Operativo</span>
+              <span>SAME • Centro de Control</span>
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-bold uppercase">
-                Admin RBAC
+                RBAC Operador
               </span>
             </h1>
-            <p className="text-[10px] text-cyan-400 font-medium">
-              {currentUser?.nombre_completo ? `Admin: ${currentUser.nombre_completo}` : 'Torre de Vigilancia y Gestión de Flota'}
+            <p className="text-[10px] text-cyan-400 font-medium truncate">
+              {currentUser?.nombre_completo
+                ? `Operador: ${currentUser.nombre_completo}`
+                : 'Torre de Vigilancia y Gestión de Flota'}
             </p>
           </div>
+
+          {/* Navegación de Sub-vistas Administrativas */}
+          <nav className="flex bg-slate-800/80 p-1 rounded-xl border border-slate-700/80 ml-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab('map')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                activeTab === 'map'
+                  ? 'bg-cyan-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <MapIcon className="w-3.5 h-3.5" />
+              <span>Mapa En Vivo</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('trips')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                activeTab === 'trips'
+                  ? 'bg-cyan-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Banknote className="w-3.5 h-3.5" />
+              <span>Viajes e Ingresos</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('accounts')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                activeTab === 'accounts'
+                  ? 'bg-cyan-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Cuentas y Zonas</span>
+            </button>
+          </nav>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleReset}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Resetear Flota</span>
-          </button>
-
+        <div className="flex items-center gap-2.5 shrink-0">
           <span className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-emerald-950/60 text-emerald-400 border border-emerald-800">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>WebSocket En Vivo</span>
+            <span>Telemetría En Vivo</span>
           </span>
 
-          {onLogout && (
+          {/* Menú discreto de Herramientas Dev */}
+          <div className="relative">
             <button
-              onClick={onLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800 transition font-medium"
+              type="button"
+              onClick={() => setShowDevMenu((v) => !v)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Cerrar Sesión</span>
+              <Wrench className="w-3.5 h-3.5 text-slate-400" />
+              <span className="hidden sm:inline">Pruebas</span>
+              <ChevronDown className="w-3 h-3" />
             </button>
-          )}
+
+            {showDevMenu && (
+              <div className="absolute right-0 mt-1.5 w-52 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-1.5 z-50">
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="w-full px-3 py-2 rounded-lg text-left text-xs text-rose-300 hover:bg-rose-950/70 flex items-center gap-2 transition"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Resetear flota y BD (Dev)</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Main Grid: Map on Left (70%) + Alerts Panel on Right (30%) */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Left Side: Map & Metrics */}
-        <div className="flex-1 flex flex-col relative h-[60%] lg:h-full">
-          {/* Metrics bar */}
-          <div className="p-3 bg-slate-900/90 border-b border-slate-800 grid grid-cols-4 gap-2 text-xs">
+      {/* Vista 1: Mapa En Vivo + Flota + Acciones + Alertas (siempre montada para no perder estado Leaflet) */}
+      <div
+        className={
+          activeTab === 'map'
+            ? 'flex-1 flex flex-col lg:flex-row overflow-hidden'
+            : 'hidden'
+        }
+      >
+        {/* Lado Izquierdo: Métricas Exactas + Mapa */}
+        <div className="flex-1 flex flex-col relative h-[58%] lg:h-full min-w-0">
+          <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 grid grid-cols-3 sm:grid-cols-6 gap-2 text-xs">
             <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
               <span className="text-slate-400 block text-[10px]">Flota Total</span>
-              <span className="text-lg font-bold text-white">{totalScooters}</span>
+              <span className="text-lg font-bold font-mono text-white">{totalScooters}</span>
             </div>
             <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
               <span className="text-emerald-400 block text-[10px]">Disponibles</span>
-              <span className="text-lg font-bold text-emerald-400">{availableCount}</span>
+              <span className="text-lg font-bold font-mono text-emerald-400">
+                {availableCount}
+              </span>
             </div>
             <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
               <span className="text-cyan-400 block text-[10px]">En Ruta</span>
-              <span className="text-lg font-bold text-cyan-400">{inUseCount}</span>
+              <span className="text-lg font-bold font-mono text-cyan-400">{inUseCount}</span>
+            </div>
+            <div
+              className={`p-2 rounded-lg border ${
+                outOrBlockedCount > 0
+                  ? 'bg-rose-950/50 border-rose-600/70'
+                  : 'bg-slate-800/60 border-slate-700/50'
+              }`}
+            >
+              <span className="text-rose-400 block text-[10px]">Fuera Zona / Bloq.</span>
+              <span className="text-lg font-bold font-mono text-rose-400">
+                {outOrBlockedCount}
+              </span>
             </div>
             <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
-              <span className="text-rose-400 block text-[10px]">Alertas Activas</span>
-              <span className="text-lg font-bold text-rose-400">{alerts.length}</span>
+              <span className="text-amber-300 block text-[10px]">Mant. / Bat. &lt;20%</span>
+              <span className="text-lg font-bold font-mono text-amber-300">
+                {maintenanceCount}
+              </span>
+            </div>
+            <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/50">
+              <span className="text-rose-300 block text-[10px]">Alertas Pend.</span>
+              <span className="text-lg font-bold font-mono text-rose-300">
+                {pendingAlertsCount}
+              </span>
             </div>
           </div>
 
-          {/* Leaflet Map */}
           <div ref={mapContainerRef} className="flex-1 w-full" />
         </div>
 
-        {/* Right Side: Fleet Status & Security Alerts */}
-        <div className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-slate-800 bg-slate-900/60 flex flex-col h-[40%] lg:h-full overflow-hidden">
-          {/* Tab 1: Monitoreo de Flota */}
-          <div className="p-3 border-b border-slate-800 flex items-center justify-between">
+        {/* Lado Derecho: Estado de Flota, Acciones sobre Unidad Seleccionada y Alertas */}
+        <div className="w-full lg:w-[410px] border-t lg:border-t-0 lg:border-l border-slate-800 bg-slate-900/70 flex flex-col h-[42%] lg:h-full overflow-hidden">
+          <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between shrink-0">
             <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
               <Activity className="w-4 h-4 text-emerald-400" />
               <span>Estado de la Flota</span>
             </h3>
-            <span className="text-[10px] text-slate-400 font-mono">{fleetList.length} unidades</span>
+            <button
+              type="button"
+              onClick={loadFleetFromServer}
+              title="Sincronizar flota con PostgreSQL"
+              className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>{fleetList.length} unidades</span>
+            </button>
           </div>
 
-          <div className="p-3 space-y-2 overflow-y-auto max-h-48 lg:max-h-60">
-            {fleetList.map((scooter) => (
-              <div
-                key={scooter.scooterId}
-                className="p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/60 flex items-center justify-between text-xs"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-white">{scooter.scooterId}</span>
-                    <span
-                      className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${
-                        scooter.emergencyStopped
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                          : scooter.locked
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : 'bg-cyan-500/20 text-cyan-300 animate-pulse'
-                      }`}
-                    >
-                      {scooter.emergencyStopped
-                        ? 'Bloqueado (Alarma)'
-                        : scooter.locked
-                        ? 'Disponible'
-                        : 'En uso'}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 truncate max-w-[150px] block mt-0.5">
-                    {scooter.zoneName}
-                  </span>
-                </div>
+          <AdminFleetPanel
+            fleet={fleetList}
+            filter={fleetFilter}
+            onFilterChange={setFleetFilter}
+            selectedScooterId={selectedScooterId}
+            followScooterId={followScooterId}
+            onSelectScooter={handleSelectScooter}
+          />
 
-                <div className="text-right">
-                  <div className="font-mono text-xs font-bold text-slate-200">
-                    {scooter.speed} km/h
-                  </div>
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400 justify-end mt-0.5">
-                    <Battery className="w-3 h-3 text-emerald-400" />
-                    <span>{scooter.battery}%</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          {selectedUnit && (
+            <AdminScooterDrawer
+              unit={selectedUnit}
+              isFollowing={followScooterId === selectedUnit.scooterId}
+              isBusy={isBusy}
+              onClose={() => setSelectedScooterId(null)}
+              onToggleFollow={handleToggleFollow}
+              onRelocate={handleRelocateScooter}
+              onChangeStatus={handleChangeScooterStatus}
+              onClearLock={handleClearLock}
+              onSendNotice={handleSendNotice}
+              onForceCancelBlockedTrip={handleForceCancelBlockedTrip}
+            />
+          )}
 
-          {/* Tab 2: Alertas Críticas de Seguridad */}
-          <div className="p-3 border-t border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
-            <h3 className="text-xs font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldAlert className="w-4 h-4 text-rose-400 animate-bounce" />
-              <span>Alertas de Seguridad & Logística</span>
-            </h3>
-            <span className="text-[10px] px-1.5 py-0.5 bg-rose-950 text-rose-300 border border-rose-800 rounded-full font-bold">
-              {alerts.length}
-            </span>
-          </div>
-
-          <div className="flex-1 p-3 space-y-2 overflow-y-auto">
-            {alerts.length === 0 ? (
-              <div className="text-center py-8 text-slate-500 text-xs">
-                Sin incidentes críticos reportados
-              </div>
-            ) : (
-              alerts.map((al) => (
-                <div
-                  key={al.id}
-                  className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-900/60 text-xs animate-fadeIn"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-rose-300 flex items-center gap-1">
-                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-                      {al.scooterId} • {al.type.toUpperCase()}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">{al.timestamp}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-300 leading-tight">{al.message}</p>
-                </div>
-              ))
-            )}
-          </div>
+          <AdminAlertsPanel
+            alerts={alerts}
+            pendingCount={pendingAlertsCount}
+            onLocateAlert={handleLocateAlert}
+            onAttendAlert={handleAttendAlert}
+          />
         </div>
       </div>
+
+      {/* Vista 2: Viajes e Ingresos */}
+      {activeTab === 'trips' && (
+        <AdminTripsTab
+          trips={trips}
+          summary={summary}
+          onRefresh={loadSecondaryData}
+        />
+      )}
+
+      {/* Vista 3: Cuentas de Turistas y Reglas PostGIS */}
+      {activeTab === 'accounts' && (
+        <AdminUsersZonesTab
+          users={users}
+          zones={zones}
+          isBusy={isBusy}
+          onToggleUserStatus={handleToggleUserStatus}
+          onSaveZone={handleSaveZone}
+        />
+      )}
     </div>
   );
 };

@@ -171,7 +171,40 @@ class ScooterHardwareSimulator {
       },
     );
 
-    // 6. Evento servidor: Reseteo de ambiente de pruebas
+    // 6. Evento servidor: Recolocación logística por operador
+    this.socket.on(
+      'scooter:relocated',
+      (data: { scooterId?: string; lat: number; lng: number; battery?: number; locked?: boolean }) => {
+        if (data?.scooterId && data.scooterId !== SCOOTER_ID) return;
+        this.lat = data.lat;
+        this.lng = data.lng;
+        if (typeof data.battery === 'number') this.battery = data.battery;
+        this.speed = 0.0;
+        this.locked = data.locked !== false;
+        this.isMoving = !this.locked;
+        this.manualControl = false;
+        console.log(`\n🚚 [RECOLOCADO POR ADMIN] ${SCOOTER_ID} movido a [${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}] | Bat: ${this.battery}%\n`);
+      },
+    );
+
+    // 7. Evento servidor: Liberación de alarma o bloqueo por operador
+    this.socket.on(
+      'scooter:alarm_cleared',
+      (data: { scooterId?: string; locked?: boolean; lat?: number; lng?: number; battery?: number }) => {
+        if (data?.scooterId && data.scooterId !== SCOOTER_ID) return;
+        if (typeof data.lat === 'number') this.lat = data.lat;
+        if (typeof data.lng === 'number') this.lng = data.lng;
+        if (typeof data.battery === 'number') this.battery = data.battery;
+        this.locked = Boolean(data.locked);
+        this.isMoving = !this.locked;
+        if (this.locked) {
+          this.speed = 0.0;
+        }
+        console.log(`\n🛡️ [ALARMA LIBERADA POR ADMIN] ${SCOOTER_ID} | Candado: ${this.locked ? 'BLOQUEADO' : 'DESBLOQUEADO'}\n`);
+      },
+    );
+
+    // 8. Evento servidor: Reseteo de ambiente de pruebas
     this.socket.on('scooter:reset', () => {
       this.lat = ROUTE_WAYPOINTS[0].lat;
       this.lng = ROUTE_WAYPOINTS[0].lng;

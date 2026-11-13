@@ -4,17 +4,32 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { QrCode, RefreshCw, LogOut } from 'lucide-react';
 import { getSocket, joinRoom } from '../services/socket';
-import { startTrip, endTrip, getActiveTrip, resetDevTrips, getScooters } from '../services/api';
+import {
+  startTrip,
+  endTrip,
+  getActiveTrip,
+  resetDevTrips,
+  getScooters,
+  getPublicZones,
+} from '../services/api';
 import { ScannerModal } from '../components/ScannerModal';
 import { ActiveTripPanel } from '../components/ActiveTripPanel';
 import { EndTripModal } from '../components/EndTripModal';
 import { ReceiptModal } from '../components/ReceiptModal';
 import { JoystickControl, JoystickVector } from '../components/JoystickControl';
-import { ActiveTrip, TelemetryBroadcast, TripReceipt, AuthUser } from '../types';
+import {
+  ActiveTrip,
+  TelemetryBroadcast,
+  TripReceipt,
+  AuthUser,
+  FleetQuickStatus,
+  ScooterState,
+} from '../types';
 import {
   MALECON_GEOFENCES,
   evaluateGeofence,
   ScooterAlarmSound,
+  ZoneSpeedOverride,
 } from '../utils/geofence';
 
 interface UserMapProps {
@@ -45,6 +60,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
 
   const [activeTrip, setActiveTrip] = useState<ActiveTrip | null>(null);
   const [liveTelemetry, setLiveTelemetry] = useState<TelemetryBroadcast | null>(null);
+  const [fleetStatuses, setFleetStatuses] = useState<Record<string, FleetQuickStatus>>({});
 
   // Control manual simulado (WASD / Flechas / Joystick) y seguridad
   const [isManualControl, setIsManualControl] = useState(false);
@@ -55,6 +71,8 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
   const [isAlarmAudioActive, setIsAlarmAudioActive] = useState(false);
   const [idleSecondsOutsideParking, setIdleSecondsOutsideParking] = useState(0);
   const [systemBanner, setSystemBanner] = useState<string | null>(null);
+  const [operatorNotice, setOperatorNotice] = useState<string | null>(null);
+  const zoneOverridesRef = useRef<ZoneSpeedOverride[]>([]);
 
   // Modales y estados
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -97,17 +115,23 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       battery: number,
       locked: boolean,
       alarmed = false,
+      estado?: string,
     ) => {
       if (!mapInstanceRef.current) return;
 
+      const isMaintenance = estado === 'mantenimiento';
       const bubbleClass = alarmed
         ? 'bg-rose-600 shadow-rose-500/70 animate-ping'
+        : isMaintenance
+        ? 'bg-amber-600 shadow-amber-500/50'
         : locked
         ? 'bg-emerald-600 shadow-emerald-500/50'
         : 'bg-cyan-500 shadow-cyan-500/50 animate-pulse';
 
       const iconColorClass = alarmed
         ? 'bg-rose-600 shadow-rose-500/70'
+        : isMaintenance
+        ? 'bg-amber-600 shadow-amber-500/50'
         : locked
         ? 'bg-emerald-600 shadow-emerald-500/50'
         : 'bg-cyan-500 shadow-cyan-500/50 animate-pulse';
@@ -136,7 +160,15 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       const popupHtml = `
         <div class="text-xs">
           <p class="font-bold text-sm text-emerald-400">${scooterId}</p>
-          <p>Estado: <strong>${alarmed ? 'Bloqueado (Alarma)' : locked ? 'Disponible (Bloqueado)' : 'En uso'}</strong></p>
+          <p>Estado: <strong>${
+            alarmed
+              ? 'Bloqueado (Alarma)'
+              : isMaintenance
+              ? 'En Mantenimiento'
+              : locked
+              ? 'Disponible (Bloqueado)'
+              : 'En uso'
+          }</strong></p>
           <p>Batería: <strong>${Math.round(battery)}%</strong></p>
           <p>Velocidad: <strong>${speed} km/h</strong></p>
         </div>
@@ -160,19 +192,30 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       const list: any[] = await getScooters();
       if (!list || list.length === 0) return;
 
+      const nextStatuses: Record<string, FleetQuickStatus> = {};
       list.forEach((scooter) => {
         const lat = Number(scooter.lat);
         const lng = Number(scooter.lng);
-        if (!lat || !lng) return;
-
-        const battery = Number(scooter.nivel_bateria) || 100;
+        const rawBat = Number(scooter.nivel_bateria);
+        const battery = Number.isFinite(rawBat) ? rawBat : 100;
         const speed = Number(scooter.velocidad_actual) || 0;
-        const locked = scooter.estado !== 'en uso';
-        const alarmed = scooter.estado === 'bloqueado';
+        const estado = (scooter.estado || 'disponible') as ScooterState;
+        const locked = estado !== 'en uso';
+        const alarmed = estado === 'bloqueado' || Boolean(scooter.out_of_zone);
 
-        scooterStatesRef.current[scooter.id] = { lat, lng, battery, speed, locked };
-        updateScooterMarker(scooter.id, lat, lng, speed, battery, locked, alarmed);
+        nextStatuses[scooter.id] = {
+          id: scooter.id,
+          estado,
+          battery: Math.round(battery),
+          outOfZone: Boolean(scooter.out_of_zone),
+        };
+
+        if (lat && lng) {
+          scooterStatesRef.current[scooter.id] = { lat, lng, battery, speed, locked };
+          updateScooterMarker(scooter.id, lat, lng, speed, battery, locked, alarmed, estado);
+        }
       });
+      setFleetStatuses(nextStatuses);
     } catch (err) {
       console.log('Error cargando flota inicial desde BD:', err);
     }
@@ -216,6 +259,14 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
 
   // 1. Cargar viaje activo previo al montar (evita bloqueos si la página se recarga)
   useEffect(() => {
+    getPublicZones()
+      .then((list) => {
+        if (Array.isArray(list)) {
+          zoneOverridesRef.current = list;
+        }
+      })
+      .catch(() => {});
+
     getActiveTrip(activeUserId)
       .then((trip) => {
         if (trip) {
@@ -223,7 +274,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
             viajeId: trip.id,
             scooterId: trip.monopatin_id,
             inicioViaje: trip.inicio_viaje,
-            tarifaMinutoCOP: 500,
+            tarifaMinutoCOP: Number(trip.tarifaMinutoCOP) || 500,
             estado: trip.estado,
           });
           joinRoom('client_trips', trip.monopatin_id);
@@ -337,12 +388,37 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
   // 3. Conexión con WebSockets para telemetría y alertas en tiempo real
   useEffect(() => {
     const socket = getSocket();
-    joinRoom('client_trips', activeTrip?.scooterId);
+    const handleConnect = () => {
+      joinRoom('client_trips', activeTrip?.scooterId);
+    };
+    handleConnect();
 
     const handleTelemetry = (data: TelemetryBroadcast) => {
       const currentTrip = activeTripRef.current;
       const isControllingThisScooter =
         isManualControlRef.current && currentTrip?.scooterId === data.scooterId;
+
+      setFleetStatuses((prev) => {
+        const prevEstado = prev[data.scooterId]?.estado;
+        const derivedEstado: ScooterState =
+          data.estado ||
+          (data.emergencyStopped || data.outOfPerimeter
+            ? 'bloqueado'
+            : !data.locked
+            ? 'en uso'
+            : prevEstado === 'mantenimiento'
+            ? 'mantenimiento'
+            : 'disponible');
+        return {
+          ...prev,
+          [data.scooterId]: {
+            id: data.scooterId,
+            estado: derivedEstado,
+            battery: Math.round(data.battery),
+            outOfZone: Boolean(data.outOfPerimeter || data.zoneType === 'prohibida'),
+          },
+        };
+      });
 
       if (isControllingThisScooter) {
         // Durante conducción manual, mantenemos la posición local suave sin saltos atrás,
@@ -360,6 +436,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
             data.battery,
             true,
             true,
+            data.estado,
           );
         }
         return;
@@ -392,6 +469,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
         data.battery,
         data.locked,
         Boolean(data.emergencyStopped),
+        data.estado,
       );
     };
 
@@ -466,16 +544,86 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       loadInitialFleet();
     };
 
+    const handleAdminNotice = (data: {
+      scooterId?: string;
+      message: string;
+      adminName?: string;
+    }) => {
+      if (data.scooterId && activeTripRef.current?.scooterId !== data.scooterId) {
+        return;
+      }
+      setOperatorNotice(
+        `${data.adminName || 'Centro de Control SAME'}: ${data.message}`,
+      );
+    };
+
+    const handleAlarmCleared = (data: {
+      scooterId?: string;
+      locked?: boolean;
+      lat?: number;
+      lng?: number;
+      battery?: number;
+    }) => {
+      if (data.scooterId && activeTripRef.current?.scooterId !== data.scooterId) {
+        loadInitialFleet();
+        return;
+      }
+      isEmergencyLockedRef.current = false;
+      setIsEmergencyLocked(false);
+      setAlarmReason(null);
+      alarmSoundRef.current.stop();
+      setIsAlarmAudioActive(false);
+
+      if (data.scooterId && scooterStatesRef.current[data.scooterId]) {
+        const st = scooterStatesRef.current[data.scooterId];
+        st.locked = Boolean(data.locked);
+        updateScooterMarker(
+          data.scooterId,
+          st.lat,
+          st.lng,
+          st.speed,
+          st.battery,
+          st.locked,
+          false,
+        );
+      }
+      setOperatorNotice('Centro de Control SAME: Bloqueo de seguridad liberado.');
+    };
+
+    const handleScooterRelocated = () => {
+      loadInitialFleet();
+    };
+
+    const handleZonesUpdated = () => {
+      getPublicZones()
+        .then((list) => {
+          if (Array.isArray(list)) {
+            zoneOverridesRef.current = list;
+          }
+        })
+        .catch(() => {});
+    };
+
+    socket.on('connect', handleConnect);
     socket.on('telemetry:broadcast', handleTelemetry);
     socket.on('scooter:emergency_stop', handleEmergencyStop);
     socket.on('trip:auto_abandoned', handleAutoAbandoned);
     socket.on('scooter:reset', handleResetEvent);
+    socket.on('admin:notice', handleAdminNotice);
+    socket.on('scooter:alarm_cleared', handleAlarmCleared);
+    socket.on('scooter:relocated', handleScooterRelocated);
+    socket.on('zones:updated', handleZonesUpdated);
 
     return () => {
+      socket.off('connect', handleConnect);
       socket.off('telemetry:broadcast', handleTelemetry);
       socket.off('scooter:emergency_stop', handleEmergencyStop);
       socket.off('trip:auto_abandoned', handleAutoAbandoned);
       socket.off('scooter:reset', handleResetEvent);
+      socket.off('admin:notice', handleAdminNotice);
+      socket.off('scooter:alarm_cleared', handleAlarmCleared);
+      socket.off('scooter:relocated', handleScooterRelocated);
+      socket.off('zones:updated', handleZonesUpdated);
     };
   }, [activeTrip?.scooterId, loadInitialFleet, updateScooterMarker]);
 
@@ -663,7 +811,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
         }
       }
 
-      const nextGeo = evaluateGeofence(nextLat, nextLng);
+      const nextGeo = evaluateGeofence(nextLat, nextLng, zoneOverridesRef.current);
       const now = Date.now();
 
       // Verificar cruce de límite del perímetro en este paso
@@ -889,7 +1037,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       const pos = scooterStatesRef.current[scooterId];
       if (pos) {
         pos.locked = false;
-        const geo = evaluateGeofence(pos.lat, pos.lng);
+        const geo = evaluateGeofence(pos.lat, pos.lng, zoneOverridesRef.current);
         setLiveTelemetry({
           scooterId,
           lat: pos.lat,
@@ -912,6 +1060,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Error al desbloquear monopatín');
+      loadInitialFleet();
     } finally {
       setIsSubmitting(false);
     }
@@ -977,13 +1126,15 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleDevReset}
-            title="Resetear viajes de prueba"
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
+          {currentUser?.rol === 'admin' && (
+            <button
+              onClick={handleDevReset}
+              title="Resetear viajes de prueba (Solo Admin)"
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {onLogout && (
             <button
@@ -997,6 +1148,20 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
           )}
         </div>
       </header>
+
+      {/* Aviso preventivo del operador del Centro de Control */}
+      {operatorNotice && (
+        <div className="absolute top-20 inset-x-4 z-30 max-w-md mx-auto p-3 rounded-2xl bg-cyan-950/95 border border-cyan-500 text-cyan-100 text-xs shadow-2xl flex items-start justify-between gap-2">
+          <span>📢 {operatorNotice}</span>
+          <button
+            type="button"
+            onClick={() => setOperatorNotice(null)}
+            className="text-cyan-300 hover:text-white font-bold px-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Notificación flotante de cierre automático o alerta del sistema */}
       {systemBanner && (
@@ -1021,6 +1186,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
           <button
             onClick={() => {
               setErrorMessage(null);
+              loadInitialFleet();
               setIsScannerOpen(true);
             }}
             className="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-2xl flex items-center justify-center gap-3 shadow-2xl shadow-emerald-900/60 transition active:scale-95 border border-emerald-400/30"
@@ -1083,6 +1249,9 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
         onUnlock={handleUnlockScooter}
         isLoading={isSubmitting}
         errorMessage={errorMessage}
+        onClearError={() => setErrorMessage(null)}
+        fleetStatuses={fleetStatuses}
+        onRefreshFleet={loadInitialFleet}
       />
 
       <EndTripModal

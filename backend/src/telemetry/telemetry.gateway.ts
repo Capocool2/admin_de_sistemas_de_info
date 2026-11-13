@@ -40,8 +40,10 @@ export class TelemetryGateway
   private readonly idleOutsideSince = new Map<string, number>();
   private readonly lastPerimeterAlertAt = new Map<string, number>();
   private readonly lastRobberyAlertAt = new Map<string, number>();
+  private readonly lastLowBatteryAlertAt = new Map<string, number>();
   private readonly simulatorClientScooters = new Map<string, string>(); // socket.id -> scooterId
   private readonly manualControlScooters = new Set<string>();
+  private readonly pendingMaintenanceScooters = new Set<string>();
   private readonly fallbackRandomTimers = new Map<string, NodeJS.Timeout>();
   private readonly fallbackPositions = new Map<
     string,
@@ -63,6 +65,13 @@ export class TelemetryGateway
   handleDisconnect(client: Socket) {
     this.simulatorClientScooters.delete(client.id);
     this.logger.log(`Cliente desconectado: ${client.id}`);
+  }
+
+  private extractFirstRow<T>(result: unknown): T | undefined {
+    if (!Array.isArray(result) || result.length === 0) return undefined;
+    const first = result[0];
+    // En TypeORM + PostgreSQL, UPDATE/DELETE ... RETURNING devuelve [rows, rowCount]
+    return Array.isArray(first) ? (first[0] as T | undefined) : (first as T | undefined);
   }
 
   private hasExternalSimulator(scooterId: string): boolean {
@@ -265,37 +274,61 @@ export class TelemetryGateway
         const topZone = zones[0];
         currentZoneName = topZone.nombre;
         currentZoneType = topZone.tipo as 'normal' | 'peatonal' | 'parqueo';
-        maxSpeed = topZone.tipo === 'peatonal' || topZone.tipo === 'parqueo' ? 10 : 20;
+        maxSpeed =
+          Number(topZone.limite_velocidad) ||
+          (topZone.tipo === 'peatonal' || topZone.tipo === 'parqueo' ? 10 : 20);
       }
 
-      const effectiveLocked = Boolean(locked || isOutOfPerimeter);
-      const effectiveSpeed = effectiveLocked
-        ? 0
-        : Math.max(0, Math.min(Number(speed) || 0, maxSpeed));
-
-      // 2. Persistencia estricta en Neon PostgreSQL con PostGIS
+      // 2. Persistencia estricta en Neon PostgreSQL con PostGIS y obtención del estado real
+      let updatedRows: Array<{ estado: string }> = [];
       if (isOutOfPerimeter) {
-        await this.dataSource.query(
+        updatedRows = await this.dataSource.query(
           `UPDATE monopatines
            SET estado = 'bloqueado',
                nivel_bateria = $1,
                velocidad_actual = 0.00,
                ubicacion = ST_SetSRID(ST_MakePoint($2, $3), 4326),
                updated_at = NOW()
-           WHERE id = $4;`,
+           WHERE id = $4
+           RETURNING estado;`,
           [battery, lng, lat, scooterId],
         );
       } else {
-        await this.dataSource.query(
+        updatedRows = await this.dataSource.query(
           `UPDATE monopatines
            SET nivel_bateria = $1,
-               velocidad_actual = $2,
+               velocidad_actual = CASE
+                 WHEN estado IN ('bloqueado', 'mantenimiento') THEN 0.00
+                 ELSE $2
+               END,
                ubicacion = ST_SetSRID(ST_MakePoint($3, $4), 4326),
                updated_at = NOW()
-           WHERE id = $5;`,
-          [battery, effectiveSpeed, lng, lat, scooterId],
+           WHERE id = $5
+           RETURNING estado;`,
+          [battery, locked ? 0 : Math.max(0, Math.min(Number(speed) || 0, maxSpeed)), lng, lat, scooterId],
         );
       }
+
+      const updatedRow = this.extractFirstRow<{
+        estado: 'disponible' | 'en uso' | 'mantenimiento' | 'bloqueado';
+      }>(updatedRows);
+
+      const dbEstado = (updatedRow?.estado ||
+        (isOutOfPerimeter ? 'bloqueado' : locked ? 'disponible' : 'en uso')) as
+        | 'disponible'
+        | 'en uso'
+        | 'mantenimiento'
+        | 'bloqueado';
+
+      const effectiveLocked = Boolean(
+        locked ||
+          isOutOfPerimeter ||
+          dbEstado === 'bloqueado' ||
+          dbEstado === 'mantenimiento',
+      );
+      const effectiveSpeed = effectiveLocked
+        ? 0
+        : Math.max(0, Math.min(Number(speed) || 0, maxSpeed));
 
       // 3. Control Antirrobo: Movimiento no autorizado con candado bloqueado
       if (locked && speed > 2.0) {
@@ -305,18 +338,21 @@ export class TelemetryGateway
         const lastAlert = this.lastRobberyAlertAt.get(scooterId) || 0;
         if (now - lastAlert > 10000) {
           this.lastRobberyAlertAt.set(scooterId, now);
-          await this.dataSource.query(
+          const inserted = await this.dataSource.query(
             `INSERT INTO alertas (monopatin_id, tipo_alerta, ubicacion, estado)
-             VALUES ($1, 'robo', ST_SetSRID(ST_MakePoint($2, $3), 4326), 'pendiente')`,
+             VALUES ($1, 'robo', ST_SetSRID(ST_MakePoint($2, $3), 4326), 'pendiente')
+             RETURNING id`,
             [scooterId, lng, lat],
           );
 
           this.server.to('dashboard').emit('alert:security', {
+            alertId: inserted[0]?.id,
             type: 'robo',
             scooterId,
             lat,
             lng,
             speed,
+            status: 'pendiente',
             timestamp: new Date().toISOString(),
             message: `¡ALERTA DE ROBO! Monopatín ${scooterId} en movimiento no autorizado.`,
           });
@@ -333,16 +369,39 @@ export class TelemetryGateway
           });
       }
 
-      // 4. Control de Batería Crítica (< 15%)
+      // 4. Control de Batería Crítica (< 15%) con registro persistente sin duplicados
       if (battery < 15) {
-        this.server.to('dashboard').emit('alert:maintenance', {
-          type: 'bateria_baja',
-          scooterId,
-          battery,
-          lat,
-          lng,
-          message: `Monopatín ${scooterId} con batería crítica (${battery}%). Requiere recarga.`,
-        });
+        const now = Date.now();
+        const lastLowBat = this.lastLowBatteryAlertAt.get(scooterId) || 0;
+        if (now - lastLowBat > 60000) {
+          this.lastLowBatteryAlertAt.set(scooterId, now);
+          const existingBat = await this.dataSource.query(
+            `SELECT id FROM alertas WHERE monopatin_id = $1 AND tipo_alerta = 'bateria_baja' AND estado = 'pendiente' LIMIT 1;`,
+            [scooterId],
+          );
+          let batAlertId = existingBat[0]?.id;
+          if (!batAlertId) {
+            const insertedBat = await this.dataSource.query(
+              `INSERT INTO alertas (monopatin_id, tipo_alerta, ubicacion, estado)
+               VALUES ($1, 'bateria_baja', ST_SetSRID(ST_MakePoint($2, $3), 4326), 'pendiente')
+               RETURNING id;`,
+              [scooterId, lng, lat],
+            );
+            batAlertId = insertedBat[0]?.id;
+          }
+
+          this.server.to('dashboard').emit('alert:maintenance', {
+            alertId: batAlertId,
+            type: 'bateria_baja',
+            scooterId,
+            battery,
+            lat,
+            lng,
+            status: 'pendiente',
+            timestamp: new Date().toISOString(),
+            message: `Monopatín ${scooterId} con batería crítica (${battery}%). Requiere recarga.`,
+          });
+        }
       }
 
       // 5. Acciones por Geocerca (Perímetro / Velocidad)
@@ -355,18 +414,21 @@ export class TelemetryGateway
         const lastAlert = this.lastPerimeterAlertAt.get(scooterId) || 0;
         if (now - lastAlert > 10000) {
           this.lastPerimeterAlertAt.set(scooterId, now);
-          await this.dataSource.query(
+          const insertedPerim = await this.dataSource.query(
             `INSERT INTO alertas (monopatin_id, tipo_alerta, ubicacion, estado)
-             VALUES ($1, 'fuera_perimetro', ST_SetSRID(ST_MakePoint($2, $3), 4326), 'pendiente')`,
+             VALUES ($1, 'fuera_perimetro', ST_SetSRID(ST_MakePoint($2, $3), 4326), 'pendiente')
+             RETURNING id`,
             [scooterId, lng, lat],
           );
 
           this.server.to('dashboard').emit('alert:security', {
+            alertId: insertedPerim[0]?.id,
             type: 'fuera_perimetro',
             scooterId,
             lat,
             lng,
             speed: 0,
+            status: 'pendiente',
             timestamp: new Date().toISOString(),
             message: `¡INFRACCIÓN DE PERÍMETRO! Monopatín ${scooterId} salió del Gran Malecón. Motor apagado, candado cerrado y alarma 85 dB activada.`,
           });
@@ -381,7 +443,7 @@ export class TelemetryGateway
             type: 'fuera_perimetro',
             reason: 'Límite perimetral excedido. Motor apagado, candado cerrado y alarma 85 dB encendida.',
           });
-      } else {
+      } else if (!effectiveLocked) {
         const speedReason =
           currentZoneType === 'peatonal'
             ? 'Zona Peatonal de alta afluencia (Gran Malecón)'
@@ -423,11 +485,14 @@ export class TelemetryGateway
         speed: effectiveSpeed,
         battery,
         locked: effectiveLocked,
+        estado: dbEstado,
         zoneName: currentZoneName,
         zoneType: currentZoneType,
         maxSpeed,
         isInsideParkingZone,
-        emergencyStopped: isOutOfPerimeter,
+        outOfPerimeter: isOutOfPerimeter,
+        emergencyStopped: isOutOfPerimeter || dbEstado === 'bloqueado',
+        pendingMaintenance: this.pendingMaintenanceScooters.has(scooterId),
         timestamp: new Date().toISOString(),
       };
 
@@ -488,6 +553,9 @@ export class TelemetryGateway
       'Abandono por inactividad fuera de estación autorizada',
     );
 
+    this.pendingMaintenanceScooters.delete(scooterId);
+    await this.broadcastScooterSnapshot(scooterId);
+
     this.server.to('client_trips').emit('trip:auto_abandoned', {
       scooterId,
       viajeId: activeTrip.id,
@@ -495,6 +563,18 @@ export class TelemetryGateway
       costoTotalCOP: costoTotal,
       message: `Viaje cerrado automáticamente por inactividad prolongada fuera de estación. Se aplicó multa de $${this.ABANDONMENT_PENALTY_COP.toLocaleString('es-CO')} COP y bloqueo remoto.`,
     });
+  }
+
+  markPendingMaintenance(scooterId: string, pending: boolean) {
+    if (pending) {
+      this.pendingMaintenanceScooters.add(scooterId);
+    } else {
+      this.pendingMaintenanceScooters.delete(scooterId);
+    }
+  }
+
+  isPendingMaintenance(scooterId: string): boolean {
+    return this.pendingMaintenanceScooters.has(scooterId);
   }
 
   /**
@@ -506,6 +586,7 @@ export class TelemetryGateway
     this.idleOutsideSince.delete(scooterId);
     this.lastPerimeterAlertAt.delete(scooterId);
     this.lastRobberyAlertAt.delete(scooterId);
+    this.lastLowBatteryAlertAt.delete(scooterId);
   }
 
   /**
@@ -518,9 +599,11 @@ export class TelemetryGateway
     this.fallbackRandomTimers.clear();
     this.fallbackPositions.clear();
     this.manualControlScooters.clear();
+    this.pendingMaintenanceScooters.clear();
     this.idleOutsideSince.clear();
     this.lastPerimeterAlertAt.clear();
     this.lastRobberyAlertAt.clear();
+    this.lastLowBatteryAlertAt.clear();
 
     this.server.to('scooters').to('client_trips').to('dashboard').emit('scooter:reset', {
       timestamp: new Date().toISOString(),
@@ -537,12 +620,15 @@ export class TelemetryGateway
     multaCOP: number,
     reason: string,
   ) {
+    let alertId: string | undefined;
     try {
-      await this.dataSource.query(
+      const inserted = await this.dataSource.query(
         `INSERT INTO alertas (monopatin_id, tipo_alerta, ubicacion, estado)
-         VALUES ($1, 'fuera_perimetro', ST_SetSRID(ST_MakePoint($2, $3), 4326), 'pendiente')`,
+         VALUES ($1, 'fuera_perimetro', ST_SetSRID(ST_MakePoint($2, $3), 4326), 'pendiente')
+         RETURNING id`,
         [scooterId, lng, lat],
       );
+      alertId = inserted[0]?.id;
     } catch (err) {
       this.logger.warn(`No se pudo insertar alerta de abandono en BD: ${err.message}`);
     }
@@ -554,13 +640,158 @@ export class TelemetryGateway
     );
 
     this.server.to('dashboard').emit('alert:security', {
+      alertId,
       type: 'abandono',
       scooterId,
       lat,
       lng,
       speed: 0,
+      status: 'pendiente',
       timestamp: new Date().toISOString(),
       message: `¡MONOPATÍN ABANDONADO! ${scooterId} dejado fuera de estación. Bloqueado a distancia y multa ($${multaCOP.toLocaleString('es-CO')} COP) cobrada. Requiere recogida logística.`,
+    });
+  }
+
+  /**
+   * Emite fotografía actualizada de un monopatín desde Neon PostgreSQL + PostGIS
+   */
+  async broadcastScooterSnapshot(scooterId: string) {
+    try {
+      const rows: any[] = await this.dataSource.query(
+        `SELECT m.id, m.estado, m.nivel_bateria, m.velocidad_actual,
+                ST_Y(m.ubicacion) AS lat, ST_X(m.ubicacion) AS lng, m.updated_at,
+                z.nombre AS zone_name, z.tipo AS zone_type, z.limite_velocidad,
+                (z.id IS NOT NULL AND z.tipo <> 'prohibida') AS inside_perimeter,
+                COALESCE(z.tipo = 'parqueo', false) AS is_parking_zone
+         FROM monopatines m
+         LEFT JOIN LATERAL (
+           SELECT id, nombre, tipo, limite_velocidad
+           FROM zonas_geocercas
+           WHERE ST_Contains(poligono, m.ubicacion)
+           ORDER BY CASE
+             WHEN tipo = 'prohibida' THEN 1
+             WHEN tipo = 'peatonal' THEN 2
+             WHEN tipo = 'parqueo' THEN 3
+             WHEN tipo = 'normal' THEN 4
+             ELSE 5 END
+           LIMIT 1
+         ) z ON TRUE
+         WHERE m.id = $1
+         LIMIT 1;`,
+        [scooterId],
+      );
+
+      const sc = rows[0];
+      if (!sc) return;
+
+      const outOfPerimeter = !sc.inside_perimeter || sc.zone_type === 'prohibida';
+      const maxSpeed = outOfPerimeter
+        ? 0
+        : Number(sc.limite_velocidad) ||
+          (sc.zone_type === 'peatonal' || sc.zone_type === 'parqueo' ? 10 : 20);
+
+      const payload = {
+        scooterId: sc.id,
+        lat: Number(sc.lat) || 11.0182,
+        lng: Number(sc.lng) || -74.7952,
+        speed: Number(sc.velocidad_actual) || 0,
+        battery: Number(sc.nivel_bateria) ?? 100,
+        locked: sc.estado !== 'en uso',
+        estado: sc.estado,
+        zoneName: outOfPerimeter ? 'Fuera del Gran Malecón' : sc.zone_name || 'Gran Malecón',
+        zoneType: outOfPerimeter ? 'prohibida' : sc.zone_type || 'normal',
+        maxSpeed,
+        isInsideParkingZone: Boolean(sc.is_parking_zone),
+        outOfPerimeter,
+        emergencyStopped: outOfPerimeter || sc.estado === 'bloqueado',
+        pendingMaintenance: this.pendingMaintenanceScooters.has(sc.id),
+        timestamp: new Date().toISOString(),
+      };
+
+      this.server.to('dashboard').to('client_trips').emit('telemetry:broadcast', payload);
+    } catch (err) {
+      this.logger.warn(`No se pudo emitir snapshot de ${scooterId}: ${err.message}`);
+    }
+  }
+
+  /**
+   * Notifica al hardware/simulador y mapas que el operador recolocó/recargó la unidad
+   */
+  async notifyScooterRelocated(
+    scooterId: string,
+    lat: number,
+    lng: number,
+    battery: number,
+  ) {
+    this.clearScooterRuntime(scooterId);
+    this.pendingMaintenanceScooters.delete(scooterId);
+
+    const payload = {
+      scooterId,
+      lat,
+      lng,
+      battery,
+      locked: true,
+      timestamp: new Date().toISOString(),
+    };
+    this.server.to(`scooter_${scooterId}`).to('scooters').to('client_trips').emit('scooter:relocated', payload);
+    await this.broadcastScooterSnapshot(scooterId);
+  }
+
+  /**
+   * Notifica liberación de alarma o bloqueo desde el Centro de Control
+   */
+  async notifyClearAlarmLock(
+    scooterId: string,
+    locked: boolean,
+    lat: number,
+    lng: number,
+    battery: number,
+  ) {
+    this.idleOutsideSince.delete(scooterId);
+    this.lastPerimeterAlertAt.delete(scooterId);
+    this.lastRobberyAlertAt.delete(scooterId);
+
+    const payload = {
+      scooterId,
+      locked,
+      lat,
+      lng,
+      battery,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.server
+      .to(`scooter_${scooterId}`)
+      .to('scooters')
+      .to('client_trips')
+      .to('dashboard')
+      .emit('scooter:alarm_cleared', payload);
+
+    await this.broadcastScooterSnapshot(scooterId);
+  }
+
+  /**
+   * Envía un aviso operativo preventivo al turista en ruta
+   */
+  sendOperatorNotice(scooterId: string, message: string, adminName?: string) {
+    this.server.to(`scooter_${scooterId}`).to('client_trips').emit('admin:notice', {
+      scooterId,
+      message,
+      adminName: adminName || 'Centro de Control SAME',
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  notifyZonesUpdated() {
+    this.server.to('dashboard').to('client_trips').to('scooters').emit('zones:updated', {
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  notifyAlertsChanged() {
+    this.server.to('dashboard').emit('alerts:updated', {
+      timestamp: new Date().toISOString(),
     });
   }
 
