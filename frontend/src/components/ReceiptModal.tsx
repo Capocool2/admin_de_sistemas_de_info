@@ -64,6 +64,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receipt, onClose }) 
               </span>
             </div>
 
+            {receipt.penalizado && (receipt.multaCOP ?? 0) > 0 && (
+              <div className="flex items-center justify-between text-rose-300 bg-rose-950/50 border border-rose-800/70 px-2.5 py-1.5 rounded-lg">
+                <span className="font-medium">Multa por abandono fuera de estación:</span>
+                <span className="font-bold text-rose-400">
+                  +${(receipt.multaCOP || 0).toLocaleString('es-CO')} COP
+                </span>
+              </div>
+            )}
+
             <div className="flex items-center justify-between text-slate-300">
               <span className="flex items-center gap-1.5 text-slate-400">
                 <MapPin className="w-3.5 h-3.5 text-emerald-400" />

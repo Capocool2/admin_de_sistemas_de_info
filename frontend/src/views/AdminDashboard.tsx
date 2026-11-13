@@ -266,13 +266,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
 
       if (!mapInstanceRef.current) return;
 
-      const { scooterId, lat, lng, speed, battery, locked } = data;
+      const { scooterId, lat, lng, speed, battery, locked, emergencyStopped } = data;
       const isLocked = locked;
+      const isAlarmed = Boolean(emergencyStopped);
 
       const markerHtml = `
         <div class="relative flex items-center justify-center w-8 h-8">
           <div class="w-7 h-7 rounded-full ${
-            !isLocked
+            isAlarmed
+              ? 'bg-rose-600 shadow-rose-500/70 animate-ping'
+              : !isLocked
               ? 'bg-cyan-500 shadow-cyan-400/50 animate-pulse'
               : 'bg-emerald-500 shadow-emerald-400/50'
           } shadow-md border border-white flex items-center justify-center text-white text-[10px] font-bold">
@@ -288,19 +291,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         iconAnchor: [14, 14],
       });
 
+      const popupHtml = `
+        <div class="text-xs">
+          <p class="font-bold text-sm text-cyan-400">${scooterId}</p>
+          <p>Estado: <strong>${isAlarmed ? 'Bloqueado (Alarma)' : isLocked ? 'Disponible' : 'En uso'}</strong></p>
+          <p>Velocidad: <strong>${speed} km/h</strong></p>
+          <p>Batería: <strong>${battery}%</strong></p>
+        </div>
+      `;
+
       if (markersRef.current[scooterId]) {
         markersRef.current[scooterId].setLatLng([lat, lng]);
         markersRef.current[scooterId].setIcon(customIcon);
+        markersRef.current[scooterId].setPopupContent(popupHtml);
       } else {
         const marker = L.marker([lat, lng], { icon: customIcon }).addTo(mapInstanceRef.current);
-        marker.bindPopup(`
-          <div class="text-xs">
-            <p class="font-bold text-sm text-cyan-400">${scooterId}</p>
-            <p>Estado: <strong>${isLocked ? 'Disponible' : 'En uso'}</strong></p>
-            <p>Velocidad: <strong>${speed} km/h</strong></p>
-            <p>Batería: <strong>${battery}%</strong></p>
-          </div>
-        `);
+        marker.bindPopup(popupHtml);
         markersRef.current[scooterId] = marker;
       }
     };
@@ -330,20 +336,52 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       setAlerts((prev) => [newAlert, ...prev.slice(0, 15)]);
     };
 
+    const handleResetEvent = () => {
+      setAlerts([]);
+      getScooters()
+        .then((list: any[]) => {
+          if (!list || list.length === 0) return;
+          const liveFleet: { [id: string]: TelemetryBroadcast } = {};
+          list.forEach((scooter) => {
+            const lat = Number(scooter.lat) || 11.0182;
+            const lng = Number(scooter.lng) || -74.7952;
+            const speed = Number(scooter.velocidad_actual) || 0;
+            const battery = Number(scooter.nivel_bateria) || 100;
+            const locked = scooter.estado !== 'en uso';
+            liveFleet[scooter.id] = {
+              scooterId: scooter.id,
+              lat,
+              lng,
+              speed,
+              battery,
+              locked,
+              zoneName: 'Gran Malecón (Neon DB)',
+              timestamp: scooter.updated_at || new Date().toISOString(),
+            };
+            markersRef.current[scooter.id]?.setLatLng([lat, lng]);
+          });
+          setFleet(liveFleet);
+        })
+        .catch(() => {});
+    };
+
     socket.on('telemetry:broadcast', handleTelemetry);
     socket.on('alert:security', handleSecurityAlert);
     socket.on('alert:maintenance', handleMaintenanceAlert);
+    socket.on('scooter:reset', handleResetEvent);
 
     return () => {
       socket.off('telemetry:broadcast', handleTelemetry);
       socket.off('alert:security', handleSecurityAlert);
       socket.off('alert:maintenance', handleMaintenanceAlert);
+      socket.off('scooter:reset', handleResetEvent);
     };
   }, []);
 
   const handleReset = async () => {
     if (window.confirm('¿Deseas resetear los viajes y restablecer la flota a disponible?')) {
       await resetDevTrips();
+      setAlerts([]);
       alert('Ambiente reseteado: Monopatines en estado disponible.');
     }
   };
@@ -450,12 +488,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                     <span className="font-bold text-white">{scooter.scooterId}</span>
                     <span
                       className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${
-                        scooter.locked
+                        scooter.emergencyStopped
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : scooter.locked
                           ? 'bg-emerald-500/20 text-emerald-300'
                           : 'bg-cyan-500/20 text-cyan-300 animate-pulse'
                       }`}
                     >
-                      {scooter.locked ? 'Disponible' : 'En uso'}
+                      {scooter.emergencyStopped
+                        ? 'Bloqueado (Alarma)'
+                        : scooter.locked
+                        ? 'Disponible'
+                        : 'En uso'}
                     </span>
                   </div>
                   <span className="text-[10px] text-slate-400 truncate max-w-[150px] block mt-0.5">

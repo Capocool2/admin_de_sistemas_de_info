@@ -118,11 +118,15 @@ export async function startTrip(
   return data;
 }
 
-export async function endTrip(viajeId: string, fotoEvidenciaUrl: string) {
+export async function endTrip(
+  viajeId: string,
+  fotoEvidenciaUrl: string,
+  forzarAbandono = false,
+) {
   const response = await fetch(`${API_BASE_URL}/api/trips/end`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ viajeId, fotoEvidenciaUrl }),
+    body: JSON.stringify({ viajeId, fotoEvidenciaUrl, forzarAbandono }),
   });
 
   const data = await response.json();

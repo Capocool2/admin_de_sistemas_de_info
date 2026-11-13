@@ -6,7 +6,7 @@ import { Camera, X, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 interface EndTripModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirmEnd: (fotoUrl: string) => Promise<void>;
+  onConfirmEnd: (fotoUrl: string, forzarAbandono?: boolean) => Promise<void>;
   isLoading: boolean;
   errorMessage: string | null;
   scooterId: string;
@@ -42,7 +42,13 @@ export const EndTripModal: React.FC<EndTripModalProps> = ({
   const handleFinish = () => {
     const finalPhoto =
       photoPreview || 'https://storage.same.com.co/evidencias/foto-parqueo-malecon.jpg';
-    onConfirmEnd(finalPhoto);
+    onConfirmEnd(finalPhoto, false);
+  };
+
+  const handleAbandonOutsideZone = () => {
+    const finalPhoto =
+      photoPreview || 'https://storage.same.com.co/evidencias/foto-parqueo-malecon.jpg';
+    onConfirmEnd(finalPhoto, true);
   };
 
   return (
@@ -101,14 +107,26 @@ export const EndTripModal: React.FC<EndTripModalProps> = ({
 
           {/* Error Message if outside parking geofence */}
           {errorMessage && (
-            <div className="w-full mb-3 p-3 text-xs text-rose-300 bg-rose-950/70 border border-rose-800 rounded-xl flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
-              <div>
-                <p className="font-semibold text-rose-200">Parqueo No Autorizado</p>
-                <p className="text-[11px] mt-0.5 text-rose-300/90 leading-tight">
-                  {errorMessage}
-                </p>
+            <div className="w-full mb-3 space-y-2">
+              <div className="p-3 text-xs text-rose-300 bg-rose-950/70 border border-rose-800 rounded-xl flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                <div>
+                  <p className="font-semibold text-rose-200">Parqueo No Autorizado</p>
+                  <p className="text-[11px] mt-0.5 text-rose-300/90 leading-tight">
+                    {errorMessage}
+                  </p>
+                </div>
               </div>
+
+              <button
+                type="button"
+                onClick={handleAbandonOutsideZone}
+                disabled={isLoading}
+                className="w-full py-2.5 px-3 bg-amber-700/90 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow transition border border-amber-500/40"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>Dejar aquí de todos modos (Multa +$15,000 COP)</span>
+              </button>
             </div>
           )}
 

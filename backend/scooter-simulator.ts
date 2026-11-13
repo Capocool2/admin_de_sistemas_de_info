@@ -13,14 +13,14 @@ const ROUTE_WAYPOINTS = [
   { lat: 11.0168, lng: -74.7938, desc: 'Ingreso a Paseo Peatonal Caimán del Río (Límite 10 km/h)' },
   { lat: 11.0158, lng: -74.7935, desc: 'Sector Gastronómico y Plaza de Luces' },
   { lat: 11.0150, lng: -74.7925, desc: 'Estación Caimán del Río (P2 - Parqueo Autorizado)' },
-  { lat: 11.0158, lng: -74.7933, desc: 'Retorno por la franja peatonal Caimán del Río' },
+  { lat: 11.0165, lng: -74.7940, desc: 'Estación Manglar / Plaza de Luces (P3)' },
   { lat: 11.0170, lng: -74.7940, desc: 'Retorno por ciclorruta hacia Puerta de Oro' },
-  { lat: 11.0182, lng: -74.7952, desc: 'Llegada de vuelta a Estación Puerta de Oro (P1)' },
+  { lat: 11.0145, lng: -74.7918, desc: 'Ciclorruta Sur del Malecón' },
 ];
 
 class ScooterHardwareSimulator {
   private socket: Socket;
-  private currentWaypointIndex = 0;
+  private targetWaypointIndex = 1;
   private lat = ROUTE_WAYPOINTS[0].lat;
   private lng = ROUTE_WAYPOINTS[0].lng;
   private battery = 85.0; // %
@@ -28,11 +28,21 @@ class ScooterHardwareSimulator {
   private maxAllowedSpeed = 20.0; // km/h (regulado por geocercas)
   private locked = true; // Candado físico
   private isMoving = false;
+  private manualControl = false;
   private telemetryTimer: NodeJS.Timeout | null = null;
   private currentZoneDesc = 'Estación Puerta de Oro (P1)';
 
   constructor() {
     this.initSocket();
+  }
+
+  private pickRandomWaypoint(excludeIndex?: number): number {
+    if (ROUTE_WAYPOINTS.length <= 1) return 0;
+    let next = Math.floor(Math.random() * ROUTE_WAYPOINTS.length);
+    while (next === excludeIndex) {
+      next = Math.floor(Math.random() * ROUTE_WAYPOINTS.length);
+    }
+    return next;
   }
 
   private initSocket() {
@@ -83,6 +93,8 @@ class ScooterHardwareSimulator {
 
       this.locked = false;
       this.isMoving = true;
+      this.manualControl = false;
+      this.targetWaypointIndex = this.pickRandomWaypoint(this.targetWaypointIndex);
       this.speed = Math.min(15.0, this.maxAllowedSpeed);
     });
 
@@ -98,20 +110,23 @@ class ScooterHardwareSimulator {
 
       this.locked = true;
       this.isMoving = false;
+      this.manualControl = false;
       this.speed = 0.0;
     });
 
     // 3. Evento servidor: Regular límite de velocidad por Geocerca (PostGIS)
-    this.socket.on('scooter:set_speed_limit', (data: { maxSpeed: number; zoneName: string; reason: string }) => {
+    this.socket.on('scooter:set_speed_limit', (data: { scooterId?: string; maxSpeed: number; zoneName: string; reason: string }) => {
+      if (data?.scooterId && data.scooterId !== SCOOTER_ID) return;
       this.maxAllowedSpeed = data.maxSpeed;
       this.currentZoneDesc = data.zoneName;
 
-      // Si el vehículo supera el nuevo límite (ej. entra a Zona Peatonal a 10 km/h), desacelerar de inmediato
       if (this.speed > this.maxAllowedSpeed) {
         this.speed = this.maxAllowedSpeed;
       }
 
-      console.log(`⚡ [REGULACIÓN GEOCERCA] Zona: "${data.zoneName}" | Límite Máximo: ${data.maxSpeed} km/h (${data.reason})`);
+      if (!this.manualControl) {
+        console.log(`⚡ [REGULACIÓN GEOCERCA] Zona: "${data.zoneName}" | Límite Máximo: ${data.maxSpeed} km/h (${data.reason})`);
+      }
     });
 
     // 4. Evento servidor: Parada de Emergencia (Salida de Perímetro o Alerta de Robo)
@@ -121,6 +136,7 @@ class ScooterHardwareSimulator {
       this.speed = 0.0;
       this.locked = true;
       this.isMoving = false;
+      this.manualControl = false;
 
       console.log(`\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨`);
       console.log(`🚨 [ALARMA ACÚSTICA IoT & CORTE DE TRACCIÓN ACTIVADOS]`);
@@ -130,22 +146,78 @@ class ScooterHardwareSimulator {
       console.log(`🚨 Bip continuo de advertencia sonando (85 dB)...`);
       console.log(`🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n`);
     });
+
+    // 5. Evento servidor: Pausar o reanudar simulación aleatoria desde Control Manual
+    this.socket.on(
+      'simulator:control_mode',
+      (data: { scooterId: string; manual: boolean; lat?: number; lng?: number; battery?: number; locked?: boolean }) => {
+        if (data?.scooterId && data.scooterId !== SCOOTER_ID) return;
+
+        if (data.manual) {
+          this.manualControl = true;
+          console.log(`\n🎮 [CONTROL MANUAL ACTIVADO] Simulación aleatoria pausada para ${SCOOTER_ID}\n`);
+        } else {
+          this.manualControl = false;
+          if (typeof data.lat === 'number') this.lat = data.lat;
+          if (typeof data.lng === 'number') this.lng = data.lng;
+          if (typeof data.battery === 'number') this.battery = data.battery;
+          if (typeof data.locked === 'boolean') {
+            this.locked = data.locked;
+            this.isMoving = !data.locked;
+          }
+          this.targetWaypointIndex = this.pickRandomWaypoint(this.targetWaypointIndex);
+          console.log(`\n🔀 [CONTROL MANUAL FINALIZADO] Reanudando simulación aleatoria para ${SCOOTER_ID}\n`);
+        }
+      },
+    );
+
+    // 6. Evento servidor: Reseteo de ambiente de pruebas
+    this.socket.on('scooter:reset', () => {
+      this.lat = ROUTE_WAYPOINTS[0].lat;
+      this.lng = ROUTE_WAYPOINTS[0].lng;
+      this.battery = 100.0;
+      this.speed = 0.0;
+      this.maxAllowedSpeed = 20.0;
+      this.locked = true;
+      this.isMoving = false;
+      this.manualControl = false;
+      this.currentZoneDesc = ROUTE_WAYPOINTS[0].desc;
+      console.log(`\n🔄 [RESETEO DE FLOTA] ${SCOOTER_ID} restablecido en Estación P1 (100% batería, bloqueado)\n`);
+    });
   }
 
   /**
    * Bucle de telemetría IoT periódico: cada 5 segundos reporta coordenadas, batería y velocidad
+   * (se detiene automáticamente cuando el usuario toma el control manual)
    */
   private startTelemetryLoop() {
     this.telemetryTimer = setInterval(() => {
-      // Si el monopatín está en marcha (desbloqueado), avanza al siguiente waypoint y consume batería
-      if (!this.locked && this.isMoving) {
-        this.currentWaypointIndex = (this.currentWaypointIndex + 1) % ROUTE_WAYPOINTS.length;
-        const currentTarget = ROUTE_WAYPOINTS[this.currentWaypointIndex];
-        this.lat = currentTarget.lat;
-        this.lng = currentTarget.lng;
+      if (this.manualControl) {
+        return;
+      }
 
-        // Fluctuación realista de velocidad dentro del límite permitido
-        this.speed = Math.max(8, Number((this.maxAllowedSpeed - Math.random() * 2).toFixed(1)));
+      // Si el monopatín está en marcha (desbloqueado), avanza de forma aleatoria por el Gran Malecón
+      if (!this.locked && this.isMoving) {
+        const target = ROUTE_WAYPOINTS[this.targetWaypointIndex];
+        const dLat = target.lat - this.lat;
+        const dLng = target.lng - this.lng;
+        const dist = Math.hypot(dLat, dLng);
+        const step = 0.0008;
+
+        if (dist <= step) {
+          this.lat = target.lat;
+          this.lng = target.lng;
+          this.targetWaypointIndex = this.pickRandomWaypoint(this.targetWaypointIndex);
+        } else {
+          this.lat += (dLat / dist) * step;
+          this.lng += (dLng / dist) * step;
+        }
+
+        // Fluctuación aleatoria realista dentro del límite permitido de la zona
+        const minSpeed = Math.min(7, this.maxAllowedSpeed);
+        this.speed = Number(
+          Math.min(this.maxAllowedSpeed, minSpeed + Math.random() * Math.max(2, this.maxAllowedSpeed - minSpeed)).toFixed(1),
+        );
 
         // Consumo gradual de batería (-0.1% cada ciclo de 5 segundos)
         this.battery = Math.max(0, Number((this.battery - 0.1).toFixed(2)));
@@ -163,9 +235,7 @@ class ScooterHardwareSimulator {
       };
 
       // Transmisión al WebSocket del backend
-      this.socket.emit('telemetry:update', telemetryPayload, (ack: any) => {
-        // Confirmación opcional
-      });
+      this.socket.emit('telemetry:update', telemetryPayload);
 
       // Imprimir feed en consola del operador del simulador
       const statusIcon = this.locked ? '🔒' : '🔓';
@@ -173,7 +243,7 @@ class ScooterHardwareSimulator {
         `📡 [TELEMETRÍA] ${statusIcon} Estado: ${this.locked ? 'Bloqueado ' : 'En marcha '} | ` +
         `Vel: ${this.speed.toString().padStart(4, ' ')} km/h (Max: ${this.maxAllowedSpeed} km/h) | ` +
         `Bat: ${Math.round(this.battery)}% | ` +
-        `Coords: [${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}] (${ROUTE_WAYPOINTS[this.currentWaypointIndex].desc})`
+        `Coords: [${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}] (${this.currentZoneDesc})`
       );
     }, 5000);
   }

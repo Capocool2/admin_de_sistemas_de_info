@@ -1,0 +1,308 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="same-flujo" name="Flujo SAME - Monopatines Gran Malecón">
+    <mxGraphModel dx="2100" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="2600" pageHeight="4300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="titulo" value="&lt;b&gt;SAME – Sistema de Alquiler de Monopatines Eléctricos&lt;/b&gt;&lt;br&gt;Gran Malecón del Río, Barranquilla · ¿Cómo funciona un viaje de principio a fin?" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=19;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="60" y="10" width="2400" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="etapa1" value="ETAPA 1&lt;br&gt;Alquiler y desbloqueo" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fontSize=14;fontStyle=1;horizontal=0;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#0f172a;dashed=1;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="-120" y="132.5" width="150" height="1310" as="geometry" />
+        </mxCell>
+        <mxCell id="etapa2" value="ETAPA 2&lt;br&gt;Recorrido, velocidad y seguridad" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fontSize=14;fontStyle=1;horizontal=0;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#0f172a;dashed=1;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="-120" y="1257.5" width="150" height="1310" as="geometry" />
+        </mxCell>
+        <mxCell id="etapa3" value="ETAPA 3&lt;br&gt;Devolución, pago o sanción por abandono" style="rounded=1;arcSize=6;whiteSpace=wrap;html=1;fontSize=14;fontStyle=1;horizontal=0;fillColor=#fef9c3;strokeColor=#ca8a04;fontColor=#0f172a;dashed=1;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="-120" y="2607.5" width="150" height="1535" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_turista" value="👤 1. Turista / Usuario (App en el Celular)" style="swimlane;startSize=55;horizontal=1;whiteSpace=wrap;html=1;fontSize=15;fontStyle=1;fillColor=#ecfdf5;strokeColor=#059669;swimlaneFillColor=#ffffff;strokeWidth=2;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="90" width="600" height="4095" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_sistema" value="🧠 2. Sistema Inteligente SAME" style="swimlane;startSize=55;horizontal=1;whiteSpace=wrap;html=1;fontSize=15;fontStyle=1;fillColor=#eff6ff;strokeColor=#2563eb;swimlaneFillColor=#ffffff;strokeWidth=2;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="660" y="90" width="640" height="4095" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_monopatin" value="🚲 3. Monopatín Eléctrico (Candado y GPS)" style="swimlane;startSize=55;horizontal=1;whiteSpace=wrap;html=1;fontSize=15;fontStyle=1;fillColor=#ecfeff;strokeColor=#0891b2;swimlaneFillColor=#ffffff;strokeWidth=2;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="90" width="600" height="4095" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_vigilancia" value="🛡️ 4. Centro de Control y Vigilancia" style="swimlane;startSize=55;horizontal=1;whiteSpace=wrap;html=1;fontSize=15;fontStyle=1;fillColor=#fff1f2;strokeColor=#e11d48;swimlaneFillColor=#ffffff;strokeWidth=2;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="1900" y="90" width="560" height="4095" as="geometry" />
+        </mxCell>
+        <mxCell id="t_inicio" value="&lt;b&gt;INICIO&lt;/b&gt;&lt;br&gt;El turista abre el mapa en su celular y escanea el código QR del monopatín" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=10;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="92" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_cuenta" value="¿Tiene cuenta activa y un medio de pago válido?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="180" y="297" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="t_avisoCuenta" value="Aviso en el celular: debe activar su cuenta o registrar un medio de pago" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="317" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_viajePrev" value="¿Tenía otro viaje abierto sin cerrar?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="180" y="522" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="t_cerrarPrev" value="Se cierra y liquida el viaje anterior antes de continuar" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="542" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_monopatin" value="¿El monopatín está libre y tiene al menos 20% de batería?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="180" y="747" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="t_elegirOtro" value="Aviso: ese monopatín no tiene carga suficiente o está en mantenimiento. Debe elegir otro" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="767" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_autoriza" value="&lt;b&gt;Paso 1:&lt;/b&gt; Autoriza el alquiler y envía la orden de abrir el candado" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="190" y="992" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_abre" value="&lt;b&gt;Paso 2:&lt;/b&gt; Abre su candado electrónico y enciende el motor" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="992" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="t_viajeVivo" value="&lt;b&gt;Paso 3:&lt;/b&gt; Inicia el viaje viendo en su celular tiempo, velocidad y costo ($500 COP/min)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#e0f2fe;strokeColor=#0284c7;fontColor=#0c4a6e;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="1217" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_reporta" value="Durante todo el viaje envía su ubicación GPS, velocidad y batería cada 5 segundos" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#e0f2fe;strokeColor=#0284c7;fontColor=#0c4a6e;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="1217" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_robo" value="¿Se está moviendo con el candado cerrado? (posible robo)" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="180" y="1422" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="m_alarmaRobo" value="Apaga el motor y suena la alarma antirrobo (85 dB)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="1442" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="v_alertaRobo" value="&lt;b&gt;ALERTA DE ROBO&lt;/b&gt;&lt;br&gt;Se muestra en el mapa la ubicación exacta del monopatín" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_vigilancia">
+          <mxGeometry x="150" y="1442" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_bateria" value="¿La batería bajó a menos del 15%?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="180" y="1647" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="v_recarga" value="Aviso de batería baja: el equipo programa la recarga del monopatín" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_vigilancia">
+          <mxGeometry x="150" y="1667" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_zona" value="¿Por qué zona del Gran Malecón está circulando?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="180" y="1872" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="m_normal" value="Circula normal: velocidad máxima de 20 km/h (Ciclorruta Av. del Río)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#e0f2fe;strokeColor=#0284c7;fontColor=#0c4a6e;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="1892" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_peatonal" value="Reduce solo su velocidad a máximo 10 km/h para proteger a los peatones" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="2117" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_fuera" value="Apaga el motor, cierra el candado y suena la alarma" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="2342" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="v_fuera" value="&lt;b&gt;ALERTA DE PERÍMETRO&lt;/b&gt;&lt;br&gt;El monopatín salió de los límites del Gran Malecón" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_vigilancia">
+          <mxGeometry x="150" y="2342" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="t_finalizar" value="Al llegar a su destino pulsa &quot;Finalizar viaje&quot; y toma una foto del monopatín estacionado" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#e0f2fe;strokeColor=#0284c7;fontColor=#0c4a6e;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="2567" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_parqueo" value="¿El GPS confirma que está dentro de una estación de parqueo autorizada?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="180" y="2772" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="t_moverlo" value="Advertencia: no está en una estación autorizada (Puerta de Oro, Caimán del Río o Manglar)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="2792" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="t_decideMover" value="¿Lo mueve a una estación o hace caso omiso y se va?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_turista">
+          <mxGeometry x="160" y="2997" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="s_aprueba" value="&lt;b&gt;Paso 1:&lt;/b&gt; Aprueba la devolución, guarda la foto y ordena cerrar el candado" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="190" y="3242" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_cierra" value="&lt;b&gt;Paso 2:&lt;/b&gt; Cierra su candado electrónico y apaga el motor" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="3242" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_cobro" value="&lt;b&gt;Paso 3:&lt;/b&gt; Calcula los minutos usados × $500 COP y realiza el cobro automático" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="190" y="3467" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="t_recibo" value="&lt;b&gt;Paso 4 · FIN (Entrega normal)&lt;/b&gt;&lt;br&gt;Recibe en su celular el recibo digital con el valor pagado" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=10;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="3467" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_carga" value="¿Le quedó al menos 20% de batería?" style="rhombus;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=11;spacing=14;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="160" y="3447" width="280" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="v_mant" value="Pasa a mantenimiento: el equipo lo recarga antes de volver a alquilarlo" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;" vertex="1" parent="lane_vigilancia">
+          <mxGeometry x="150" y="3467" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_disponible" value="Queda disponible en la estación para el siguiente turista" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=10;fillColor=#d1fae5;strokeColor=#059669;fontColor=#064e3b;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="3692" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="t_abandona" value="Hace caso omiso: deja el monopatín fuera de la estación y se va" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_turista">
+          <mxGeometry x="170" y="3917" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="s_multaAbandono" value="Detecta el abandono: cobra el tiempo usado más multa de $15.000 COP" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_sistema">
+          <mxGeometry x="190" y="3917" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="m_bloqueoRemoto" value="Cierra el candado a distancia, apaga el motor y activa la alarma" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_monopatin">
+          <mxGeometry x="170" y="3917" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="v_recogida" value="&lt;b&gt;FIN (Abandono sancionado)&lt;/b&gt;&lt;br&gt;Queda bloqueado y el equipo va a recogerlo" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fontFamily=Helvetica;strokeWidth=2;fontSize=12;spacing=10;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;" vertex="1" parent="lane_vigilancia">
+          <mxGeometry x="150" y="3917" width="260" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="e01" value="Escanea código QR" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_inicio" target="s_cuenta">
+          <mxGeometry x="0.25" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="980" y="225" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e02" value="No cumple" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_cuenta" target="t_avisoCuenta">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e03" value="Corrige e intenta" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_avisoCuenta" target="t_inicio">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e04" value="Sí cumple" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_cuenta" target="s_viajePrev">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e05" value="Sí tenía" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_viajePrev" target="t_cerrarPrev">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e06" value="No tenía" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_viajePrev" target="s_monopatin">
+          <mxGeometry x="-0.45" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e07" value="Viaje anterior cerrado" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_cerrarPrev" target="s_monopatin">
+          <mxGeometry x="-0.42" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="360" y="809" />
+              <mxPoint x="980" y="809" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e08" value="No disponible" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_monopatin" target="t_elegirOtro">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e09" value="Elige otro" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_elegirOtro" target="t_inicio">
+          <mxGeometry x="-0.52" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="135" y="900" />
+              <mxPoint x="135" y="225" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="Sí está libre" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_monopatin" target="s_autoriza">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" value="1° Ordena abrir" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_autoriza" target="m_abre">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" value="2° Candado abierto: ya puede viajar" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_abre" target="t_viajeVivo">
+          <mxGeometry x="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1600" y="1213" />
+              <mxPoint x="360" y="1213" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e13" value="3° Durante el recorrido" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_viajeVivo" target="m_reporta">
+          <mxGeometry x="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" value="Envía datos GPS cada 5 s" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_reporta" target="s_robo">
+          <mxGeometry x="-0.35" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1600" y="1477" />
+              <mxPoint x="980" y="1477" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e15" value="Sí" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_robo" target="m_alarmaRobo">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" value="Avisa robo" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_alarmaRobo" target="v_alertaRobo">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_robo" target="s_bateria">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" value="Sí (menos de 15%)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_bateria" target="v_recarga">
+          <mxGeometry x="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" value="No / continúa" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_bateria" target="s_zona">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20" value="Ciclorruta" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_zona" target="m_normal">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e21" value="Zona peatonal o estación" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_zona" target="m_peatonal">
+          <mxGeometry x="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="980" y="2250" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e22" value="Fuera del Malecón" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_zona" target="m_fuera">
+          <mxGeometry x="0.45" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="735" y="2025" />
+              <mxPoint x="735" y="2475" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e23" value="Avisa salida" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_fuera" target="v_fuera">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e24" value="Al llegar a su destino" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_viajeVivo" target="t_finalizar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e25" value="Envía foto y solicitud" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_finalizar" target="s_parqueo">
+          <mxGeometry x="0.05" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="980" y="2700" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e26" value="No está en estación" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_parqueo" target="t_moverlo">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e27" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_moverlo" target="t_decideMover">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e28" value="Lo mueve" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_decideMover" target="t_finalizar">
+          <mxGeometry x="0.22" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="135" y="3150" />
+              <mxPoint x="135" y="2700" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e29" value="Se va sin moverlo" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_decideMover" target="t_abandona">
+          <mxGeometry x="0.45" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="360" y="3251" />
+              <mxPoint x="135" y="3251" />
+              <mxPoint x="135" y="4050" />
+            </Array>
+            <mxPoint x="20" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e30" value="Sí está en estación" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_parqueo" target="s_aprueba">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e31" value="1° Ordena cerrar" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_aprueba" target="m_cierra">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e32" value="2° Pasa a cobro" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_aprueba" target="s_cobro">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e33" value="3° Envía recibo" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_cobro" target="t_recibo">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e34" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_cierra" target="m_carga">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e35" value="Sí (20% o más)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_carga" target="m_disponible">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e36" value="No (menos de 20%)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#334155;fontColor=#0f172a;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_carga" target="v_mant">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e37" value="Lo deja abandonado" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="t_abandona" target="s_multaAbandono">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e38" value="Orden: bloqueo y multa" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s_multaAbandono" target="m_bloqueoRemoto">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e39" value="Avisa para recogida" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;strokeColor=#e11d48;fontColor=#9f1239;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_bloqueoRemoto" target="v_recogida">
+          <mxGeometry x="-0.5" relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

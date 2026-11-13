@@ -20,6 +20,7 @@ import { EndTripDto } from './dto/end-trip.dto';
 export class TripsService {
   private readonly logger = new Logger(TripsService.name);
   private readonly DEFAULT_RATE_PER_MINUTE = 500; // COP
+  private readonly ABANDONMENT_PENALTY_COP = 15000; // Multa por dejar fuera de estación (COP)
 
   constructor(
     @InjectRepository(Viaje)
@@ -74,20 +75,46 @@ export class TripsService {
       // Si se solicita forzar cierre o el viaje tiene más de 24 horas (viaje anómalo/huérfano)
       if (dto.forzarCierreAnterior || horasTranscurridas >= 24) {
         this.logger.warn(
-          `Cierre preventivo de viaje anterior (ID ${activeTrip.id}, antigüedad: ${horasTranscurridas.toFixed(1)} horas). Motivo: ${
+          `Liquidación forzosa de viaje anterior (ID ${activeTrip.id}, antigüedad: ${horasTranscurridas.toFixed(1)} horas). Motivo: ${
             dto.forzarCierreAnterior ? 'forzarCierreAnterior solicitado' : 'viaje mayor a 24 horas'
           }`,
         );
 
-        activeTrip.estado = 'cancelado';
-        activeTrip.fin_viaje = new Date();
-        await this.viajeRepo.save(activeTrip);
+        const prevScooterId = activeTrip.monopatin_id;
+        const prevParking: Array<{ id: string }> = await this.dataSource.query(
+          `SELECT z.id FROM monopatines m
+           JOIN zonas_geocercas z ON ST_Contains(z.poligono, m.ubicacion)
+           WHERE m.id = $1 AND z.tipo = 'parqueo' LIMIT 1`,
+          [prevScooterId],
+        );
 
-        // Liberar el monopatín anterior si es diferente al nuevo solicitado
+        const wasAbandonedOutside = prevParking.length === 0;
+        const duracionMinutos = Math.max(
+          1,
+          Math.ceil((Date.now() - new Date(activeTrip.inicio_viaje).getTime()) / (1000 * 60)),
+        );
+        const multaAplicada = wasAbandonedOutside ? this.ABANDONMENT_PENALTY_COP : 0;
+        const costoForzado = duracionMinutos * this.DEFAULT_RATE_PER_MINUTE + multaAplicada;
+        const refForzada = `PAY-FORCE-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}`;
+
+        await this.dataSource.query(
+          `INSERT INTO pagos (viaje_id, monto, estado, referencia_transaccion, created_at)
+           VALUES ($1, $2, 'aprobado', $3, NOW());`,
+          [activeTrip.id, costoForzado, refForzada],
+        );
+
+        await this.dataSource.query(
+          `UPDATE viajes SET estado = 'finalizado', fin_viaje = NOW(), duracion_minutos = $1, costo_total = $2
+           WHERE id = $3;`,
+          [duracionMinutos, costoForzado, activeTrip.id],
+        );
+
+        this.telemetryGateway.sendLockCommand(prevScooterId);
+
         if (activeTrip.monopatin_id !== dto.scooterId) {
           await this.monopatinRepo.update(
-            { id: activeTrip.monopatin_id },
-            { estado: 'disponible', velocidad_actual: 0 },
+            { id: prevScooterId },
+            { estado: wasAbandonedOutside ? 'bloqueado' : 'disponible', velocidad_actual: 0 },
           );
         }
       } else {
@@ -137,7 +164,7 @@ export class TripsService {
     );
 
     // 6. Enviar orden electrónica de desbloqueo al candado IoT vía WebSockets
-    this.telemetryGateway.sendUnlockCommand(scooter.id);
+    await this.telemetryGateway.sendUnlockCommand(scooter.id);
 
     return {
       statusCode: 201,
@@ -186,30 +213,55 @@ export class TripsService {
         [scooterId],
       );
 
-    if (parkingMatch.length === 0) {
+    if (parkingMatch.length === 0 && !dto.forzarAbandono) {
       throw new BadRequestException({
         statusCode: 400,
         error: 'Bad Request',
         code: 'OUTSIDE_PARKING_ZONE',
         message:
-          'No es posible finalizar el viaje: El monopatín no se encuentra dentro de una Estación de Parqueo Autorizado del Gran Malecón. Por favor estacione en una estación designada (ej. Caimán del Río o Pabellón de Cristal).',
+          'No es posible finalizar el viaje sin recargo: El monopatín no está dentro de una Estación de Parqueo Autorizado (Puerta de Oro, Caimán del Río o Manglar). Si lo abandonas fuera de estación, se bloqueará a distancia y se cobrará una multa de recogida de $15,000 COP.',
       });
     }
 
-    const estacionParqueo = parkingMatch[0];
+    const esAbandonoFueraDeZona = parkingMatch.length === 0 && !!dto.forzarAbandono;
+    const estacionParqueo = esAbandonoFueraDeZona
+      ? {
+          id: 'abandono-fuera-zona',
+          nombre: 'Fuera de Estación (Multa por Abandono)',
+          tarifa_minuto: this.DEFAULT_RATE_PER_MINUTE,
+        }
+      : parkingMatch[0];
 
-    // 3. Emitir comando de bloqueo al candado IoT vía WebSockets
-    this.telemetryGateway.sendLockCommand(scooterId);
+    // 3. Emitir comando de bloqueo al candado IoT vía WebSockets (y alerta si fue abandonado)
+    if (esAbandonoFueraDeZona) {
+      const coordsRows = await this.dataSource.query(
+        `SELECT ST_Y(ubicacion) as lat, ST_X(ubicacion) as lng FROM monopatines WHERE id = $1 LIMIT 1;`,
+        [scooterId],
+      );
+      const lat = Number(coordsRows[0]?.lat) || 11.0165;
+      const lng = Number(coordsRows[0]?.lng) || -74.794;
+      await this.telemetryGateway.notifyAbandonedScooter(
+        scooterId,
+        lat,
+        lng,
+        this.ABANDONMENT_PENALTY_COP,
+        'Cliente ignoró advertencia y abandonó el monopatín fuera de estación',
+      );
+    } else {
+      this.telemetryGateway.sendLockCommand(scooterId);
+    }
 
-    // 4. Calcular tiempo transcurrido y tarifa (RN-07: Por minuto o fracción)
+    // 4. Calcular tiempo transcurrido, tarifa y posible multa por abandono (RN-07)
     const finViaje = new Date();
     const duracionMs = finViaje.getTime() - new Date(viaje.inicio_viaje).getTime();
     const duracionMinutos = Math.max(1, Math.ceil(duracionMs / (1000 * 60)));
     const tarifaAplicada = Number(estacionParqueo.tarifa_minuto) || this.DEFAULT_RATE_PER_MINUTE;
-    const costoTotal = duracionMinutos * tarifaAplicada;
+    const multaCOP = esAbandonoFueraDeZona ? this.ABANDONMENT_PENALTY_COP : 0;
+    const costoTotal = duracionMinutos * tarifaAplicada + multaCOP;
 
     // 5. INSERT REAL en pagos en PostgreSQL Neon
-    const refTransaccion = `PAY-SAME-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}`;
+    const refPrefix = esAbandonoFueraDeZona ? 'PAY-PENALTY' : 'PAY-SAME';
+    const refTransaccion = `${refPrefix}-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}`;
     const insertPagoRows = await this.dataSource.query(
       `INSERT INTO pagos (viaje_id, monto, estado, referencia_transaccion, created_at)
        VALUES ($1, $2, 'aprobado', $3, NOW())
@@ -232,29 +284,37 @@ export class TripsService {
     );
     const viajeActualizado = updateViajeRows[0];
 
-    // 7. UPDATE REAL en monopatines a 'disponible' (o 'mantenimiento' si batería < 20)
+    // 7. UPDATE REAL en monopatines ('bloqueado' si quedó abandonado fuera de estación, 'mantenimiento' si batería < 20, o 'disponible')
     const updatedScooterRows = await this.dataSource.query(
       `UPDATE monopatines 
-       SET estado = CASE WHEN nivel_bateria < 20 THEN 'mantenimiento' ELSE 'disponible' END,
+       SET estado = CASE 
+             WHEN $2 = true THEN 'bloqueado'
+             WHEN nivel_bateria < 20 THEN 'mantenimiento'
+             ELSE 'disponible'
+           END,
            velocidad_actual = 0.00,
            updated_at = NOW()
        WHERE id = $1
        RETURNING id, estado, nivel_bateria;`,
-      [scooterId],
+      [scooterId, esAbandonoFueraDeZona],
     );
     const scooterActual = updatedScooterRows[0];
 
     return {
       statusCode: 200,
-      message: 'Viaje finalizado exitosamente. Monopatín bloqueado y pago procesado.',
+      message: esAbandonoFueraDeZona
+        ? 'Monopatín bloqueado por abandono fuera de estación. Se aplicó multa de recogida y se notificó al Centro de Control.'
+        : 'Viaje finalizado exitosamente. Monopatín bloqueado y pago procesado.',
       data: {
         viajeId: viaje.id,
         scooterId: scooterId,
         estacionParqueo: estacionParqueo.nombre,
         inicioViaje: viaje.inicio_viaje,
-        finViaje: viaje.fin_viaje,
+        finViaje: viajeActualizado.fin_viaje,
         duracionMinutos,
         tarifaMinutoCOP: tarifaAplicada,
+        multaCOP,
+        penalizado: esAbandonoFueraDeZona,
         costoTotalCOP: costoTotal,
         pago: {
           id: pagoGuardado.id,
@@ -307,13 +367,25 @@ export class TripsService {
    * Reseteo completo de viajes y flota para pruebas en ambiente de desarrollo
    */
   async resetDevState() {
-    await this.dataSource.query('TRUNCATE TABLE pagos, viajes CASCADE;');
+    await this.dataSource.query('TRUNCATE TABLE pagos, viajes, alertas CASCADE;');
     await this.dataSource.query(
-      "UPDATE monopatines SET estado = 'disponible', velocidad_actual = 0.00, nivel_bateria = 100;",
+      `UPDATE monopatines
+       SET estado = 'disponible',
+           velocidad_actual = 0.00,
+           nivel_bateria = 100,
+           ubicacion = CASE
+             WHEN id = 'SCOOTER-01' THEN ST_SetSRID(ST_MakePoint(-74.7952, 11.0182), 4326)
+             WHEN id = 'SCOOTER-02' THEN ST_SetSRID(ST_MakePoint(-74.7935, 11.0158), 4326)
+             WHEN id = 'SCOOTER-03' THEN ST_SetSRID(ST_MakePoint(-74.7925, 11.0150), 4326)
+             WHEN id = 'SCOOTER-04' THEN ST_SetSRID(ST_MakePoint(-74.7940, 11.0165), 4326)
+             ELSE ST_SetSRID(ST_MakePoint(-74.7955, 11.0185), 4326)
+           END,
+           updated_at = NOW();`,
     );
+    this.telemetryGateway.resetAllRuntimes();
     return {
       statusCode: 200,
-      message: 'Ambiente reseteado: Viajes truncados y flota restablecida a disponible.',
+      message: 'Ambiente reseteado: Viajes truncados y flota restablecida a disponible en sus estaciones.',
     };
   }
 

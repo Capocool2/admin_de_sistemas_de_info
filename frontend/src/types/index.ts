@@ -40,6 +40,8 @@ export interface TripReceipt {
   finViaje: string;
   duracionMinutos: number;
   tarifaMinutoCOP: number;
+  multaCOP?: number;
+  penalizado?: boolean;
   costoTotalCOP: number;
   pago: {
     id: string;
@@ -66,7 +68,7 @@ export interface AuthResponse {
 
 export interface SecurityAlert {
   id: string;
-  type: 'robo' | 'fuera_perimetro' | 'caida' | 'bateria_baja';
+  type: 'robo' | 'fuera_perimetro' | 'caida' | 'bateria_baja' | 'abandono';
   scooterId: string;
   lat?: number;
   lng?: number;
@@ -83,6 +85,10 @@ export interface TelemetryBroadcast {
   battery: number;
   locked: boolean;
   zoneName: string;
+  zoneType?: ZoneType | 'prohibida' | 'desconocida';
+  maxSpeed?: number;
+  isInsideParkingZone?: boolean;
+  emergencyStopped?: boolean;
   timestamp: string;
 }
 
