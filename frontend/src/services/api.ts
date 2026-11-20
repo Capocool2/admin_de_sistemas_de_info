@@ -60,7 +60,7 @@ export async function registerTourist(data: {
   correo: string;
   telefono: string;
   password: string;
-}): Promise<AuthResponse> {
+}): Promise<{ statusCode: number; message: string; correo: string }> {
   const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -72,10 +72,34 @@ export async function registerTourist(data: {
     throw new Error(resData.message || 'Error al registrar la cuenta');
   }
 
-  // Guardar sesión en localStorage
-  if (resData.access_token && resData.user) {
-    localStorage.setItem('same_auth_token', resData.access_token);
-    localStorage.setItem('same_user', JSON.stringify(resData.user));
+  return resData;
+}
+
+export async function verifyEmail(correo: string, codigo: string): Promise<{ verified: boolean; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/verify-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ correo, codigo }),
+  });
+
+  const resData = await response.json();
+  if (!response.ok) {
+    throw new Error(resData.message || 'Código de verificación incorrecto o expirado');
+  }
+
+  return resData;
+}
+
+export async function resendVerificationCode(correo: string): Promise<{ statusCode: number; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/resend-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ correo }),
+  });
+
+  const resData = await response.json();
+  if (!response.ok) {
+    throw new Error(resData.message || 'Error al reenviar código');
   }
 
   return resData;
@@ -84,6 +108,18 @@ export async function registerTourist(data: {
 export function logout() {
   localStorage.removeItem('same_auth_token');
   localStorage.removeItem('same_user');
+}
+
+export async function getProfile() {
+  const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+    method: 'GET',
+    headers: getHeaders(),
+  });
+  const resData = await response.json();
+  if (!response.ok) {
+    throw new Error(resData.message || 'Error al obtener perfil');
+  }
+  return resData.user;
 }
 
 // ---------------------------------------------------------------------------

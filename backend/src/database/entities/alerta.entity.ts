@@ -1,3 +1,4 @@
+// backend/src/database/entities/alerta.entity.ts
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -21,7 +22,14 @@ export class Alerta {
     type: 'varchar',
     length: 30,
   })
-  tipo_alerta: 'bateria_baja' | 'caida' | 'robo' | 'fuera_perimetro';
+  tipo_alerta:
+    | 'bateria_baja'
+    | 'caida'
+    | 'robo'
+    | 'fuera_perimetro'
+    | 'salida_perimetro'
+    | 'usuario_dado_de_baja'
+    | 'abandono';
 
   @Index({ spatial: true })
   @Column({

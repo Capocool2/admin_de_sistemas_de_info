@@ -373,7 +373,8 @@ export class AdminService {
   async getUsers() {
     return this.dataSource.query(
       `SELECT u.id, u.nombre_completo, u.documento_identidad, u.correo, u.telefono,
-              u.estado, u.rol, u.created_at,
+              u.estado, u.rol, u.email_verificado, COALESCE(u.infracciones_perimetro, 0)::int AS infracciones_perimetro,
+              u.created_at,
               COUNT(v.id)::int AS total_viajes,
               COUNT(*) FILTER (WHERE v.estado = 'activo')::int AS viajes_activos,
               COALESCE(SUM(v.costo_total), 0)::numeric AS gasto_total

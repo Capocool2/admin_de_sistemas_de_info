@@ -1,3 +1,4 @@
+// backend/src/database/entities/viaje.entity.ts
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -44,10 +45,10 @@ export class Viaje {
 
   @Column({
     type: 'varchar',
-    length: 20,
+    length: 30,
     default: 'activo',
   })
-  estado: 'activo' | 'finalizado' | 'cancelado';
+  estado: 'activo' | 'finalizado' | 'cancelado' | 'cancelado_infraccion';
 
   @ManyToOne(() => Usuario, (usuario) => usuario.viajes, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'usuario_id' })

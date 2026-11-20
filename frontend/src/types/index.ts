@@ -64,6 +64,9 @@ export interface AuthUser {
   nombre_completo: string;
   correo: string;
   rol: 'admin' | 'turista';
+  estado?: 'activo' | 'dado_de_baja' | 'pendiente_verificacion' | 'bloqueado';
+  email_verificado?: boolean;
+  infracciones_perimetro?: number;
 }
 
 export interface AuthResponse {
@@ -144,8 +147,10 @@ export interface AdminUserRecord {
   documento_identidad: string;
   correo: string;
   telefono: string;
-  estado: 'activo' | 'bloqueado';
+  estado: 'activo' | 'dado_de_baja' | 'pendiente_verificacion' | 'bloqueado';
   rol: 'admin' | 'turista';
+  email_verificado: boolean;
+  infracciones_perimetro: number;
   created_at: string;
   total_viajes: number;
   viajes_activos: number;

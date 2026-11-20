@@ -3,6 +3,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
+  UnauthorizedException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -44,19 +46,27 @@ export class TripsService {
   async startTrip(dto: StartTripDto, authenticatedUserId?: string) {
     const targetUserId = authenticatedUserId || dto.usuarioId;
     if (!targetUserId) {
-      throw new BadRequestException('Se requiere usuario autenticado o usuarioId para iniciar el viaje.');
+      throw new UnauthorizedException('Se requiere token JWT válido para iniciar el viaje.');
     }
 
     this.logger.log(`Solicitud de inicio de viaje: Usuario=${targetUserId}, Monopatín=${dto.scooterId}`);
 
-    // 1. Validar existencia y solvencia del Usuario (RN-01)
+    // 1. Validar existencia, correo verificado y estado del Usuario en Neon Tech (RN-01)
     const usuario = await this.usuarioRepo.findOne({ where: { id: targetUserId } });
     if (!usuario) {
-      throw new NotFoundException(`Usuario con ID ${targetUserId} no encontrado.`);
+      throw new NotFoundException(`Usuario con ID ${targetUserId} no encontrado en Neon.`);
+    }
+
+    if (!usuario.email_verificado) {
+      throw new ForbiddenException('Debes validar tu correo electrónico antes de iniciar sesión o alquilar.');
+    }
+
+    if (usuario.estado === 'dado_de_baja' || (usuario.infracciones_perimetro && usuario.infracciones_perimetro >= 3)) {
+      throw new ForbiddenException('Tu cuenta ha sido dada de baja por exceder el límite de 3 salidas del área permitida del Malecón');
     }
 
     if (usuario.estado !== 'activo') {
-      throw new BadRequestException('La cuenta del usuario se encuentra bloqueada por saldo pendiente o infracción.');
+      throw new ForbiddenException('La cuenta del usuario se encuentra bloqueada por saldo pendiente o infracción.');
     }
 
     if (!usuario.token_pago) {

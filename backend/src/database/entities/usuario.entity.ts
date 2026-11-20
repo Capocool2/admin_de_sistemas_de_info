@@ -1,3 +1,4 @@
+// backend/src/database/entities/usuario.entity.ts
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -26,10 +27,10 @@ export class Usuario {
 
   @Column({
     type: 'varchar',
-    length: 20,
-    default: 'activo',
+    length: 30,
+    default: 'pendiente_verificacion',
   })
-  estado: 'activo' | 'bloqueado';
+  estado: 'pendiente_verificacion' | 'activo' | 'dado_de_baja' | 'bloqueado';
 
   @Column({
     type: 'varchar',
@@ -40,6 +41,18 @@ export class Usuario {
 
   @Column({ type: 'varchar', length: 255, select: false })
   password_hash: string;
+
+  @Column({ type: 'boolean', default: false })
+  email_verificado: boolean;
+
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  codigo_verificacion: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  codigo_expira_en: Date | null;
+
+  @Column({ type: 'int', default: 0 })
+  infracciones_perimetro: number;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   token_pago: string;

@@ -11,6 +11,7 @@ import {
   ValidationPipe,
   UsePipes,
   UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
@@ -44,13 +45,17 @@ export class TripsController {
   }
 
   /**
-   * Endpoint: Iniciar viaje
+   * Endpoint: Iniciar viaje (Exige autenticación JWT y validación estricta de correo/estado en Neon)
    * POST /api/trips/start
    */
   @Post('start')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   async startTrip(@Body() dto: StartTripDto, @Req() req: Request) {
-    const authUserId = this.extractUserIdFromToken(req);
+    const authUserId = this.extractUserIdFromToken(req) || (req as any).user?.id;
+    if (!authUserId) {
+      throw new UnauthorizedException('Se requiere token JWT válido para iniciar el viaje.');
+    }
     return this.tripsService.startTrip(dto, authUserId);
   }
 
@@ -148,4 +153,3 @@ export class TripsController {
     };
   }
 }
-

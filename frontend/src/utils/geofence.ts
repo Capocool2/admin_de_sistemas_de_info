@@ -2,6 +2,18 @@
 import { ZoneGeofence, ZoneType } from '../types';
 
 /**
+ * Polígono del Perímetro Operativo Oficial Gran Malecón (Barranquilla)
+ * Envuelve las estaciones y la franja peatonal/ciclorruta autorizada
+ * Coordenadas en formato [lat, lng] para Leaflet
+ */
+export const OPERATIONAL_PERIMETER_COORDINATES: [number, number][] = [
+  [11.0135, -74.7975],
+  [11.0135, -74.7905],
+  [11.0205, -74.7905],
+  [11.0205, -74.7975],
+];
+
+/**
  * Geocercas oficiales del Gran Malecón del Río (SRID 4326 transformadas a [lat, lng])
  */
 export const MALECON_GEOFENCES: ZoneGeofence[] = [

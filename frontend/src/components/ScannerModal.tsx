@@ -1,6 +1,7 @@
 // frontend/src/components/ScannerModal.tsx
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Html5Qrcode } from 'html5-qrcode';
 import {
   QrCode,
   X,
@@ -46,7 +47,121 @@ export const ScannerModal: React.FC<ScannerModalProps> = ({
 }) => {
   const [scooterId, setScooterId] = useState('SCOOTER-01');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [cameraState, setCameraState] = useState<'starting' | 'active' | 'scanned' | 'error'>('starting');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [scannedFeedback, setScannedFeedback] = useState<string | null>(null);
+  const scannerInstanceRef = useRef<Html5Qrcode | null>(null);
   const hasManualSelectionRef = useRef(false);
+
+  // Inicialización y liberación limpia de la cámara real con Html5Qrcode
+  useEffect(() => {
+    if (!isOpen) {
+      if (scannerInstanceRef.current) {
+        if (scannerInstanceRef.current.isScanning) {
+          scannerInstanceRef.current
+            .stop()
+            .then(() => {
+              scannerInstanceRef.current?.clear();
+              scannerInstanceRef.current = null;
+            })
+            .catch(() => {});
+        } else {
+          try {
+            scannerInstanceRef.current.clear();
+          } catch {}
+          scannerInstanceRef.current = null;
+        }
+      }
+      setCameraState('starting');
+      setScannedFeedback(null);
+      return;
+    }
+
+    let isMounted = true;
+    setCameraState('starting');
+    setCameraError(null);
+    setScannedFeedback(null);
+
+    const timer = setTimeout(async () => {
+      const container = document.getElementById('qr-scanner-viewport');
+      if (!container || !isMounted) return;
+
+      try {
+        const scanner = new Html5Qrcode('qr-scanner-viewport');
+        scannerInstanceRef.current = scanner;
+
+        await scanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: { width: 170, height: 170 },
+            aspectRatio: 1.0,
+          },
+          (decodedText) => {
+            if (!isMounted) return;
+            let parsed = decodedText.trim().toUpperCase();
+            if (parsed.includes('/')) {
+              const segments = parsed.split('/');
+              parsed = segments[segments.length - 1];
+            }
+
+            handleSelectUnit(parsed);
+            setScannedFeedback(`¡Monopatín detectado: ${parsed}!`);
+            setCameraState('scanned');
+
+            // Liberar stream de cámara inmediatamente tras escanear
+            if (scanner.isScanning) {
+              scanner
+                .stop()
+                .then(() => {
+                  scanner.clear();
+                  scannerInstanceRef.current = null;
+                })
+                .catch(() => {});
+            }
+          },
+          () => {
+            // Frame sin código QR detectado (no-op)
+          },
+        );
+
+        if (isMounted) {
+          setCameraState('active');
+        }
+      } catch (err: any) {
+        console.warn('Cámara no iniciada:', err);
+        if (isMounted) {
+          setCameraState('error');
+          setCameraError(
+            err?.message?.includes('Permission')
+              ? 'Permiso de cámara denegado en el navegador.'
+              : 'Cámara no detectada o no disponible.',
+          );
+        }
+      }
+    }, 150);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+      if (scannerInstanceRef.current) {
+        if (scannerInstanceRef.current.isScanning) {
+          scannerInstanceRef.current
+            .stop()
+            .then(() => {
+              scannerInstanceRef.current?.clear();
+              scannerInstanceRef.current = null;
+            })
+            .catch(() => {});
+        } else {
+          try {
+            scannerInstanceRef.current.clear();
+          } catch {}
+          scannerInstanceRef.current = null;
+        }
+      }
+    };
+  }, [isOpen]);
 
   const fleetIds =
     Object.keys(fleetStatuses).length > 0
@@ -161,16 +276,59 @@ export const ScannerModal: React.FC<ScannerModalProps> = ({
           </div>
         </div>
 
-        {/* Scanner Simulation Area */}
+        {/* Lector con Cámara Real Html5Qrcode + Visor de Escaneo */}
         <div className="p-5 flex flex-col items-center">
-          <div className="relative w-44 h-44 mb-4 border-2 border-dashed border-emerald-500/70 rounded-xl flex items-center justify-center bg-slate-950 overflow-hidden">
-            <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-bounce opacity-80" />
-            <div className="text-center p-4">
-              <QrCode className="w-14 h-14 text-slate-600 mx-auto mb-2 animate-pulse" />
-              <p className="text-xs text-slate-400">
-                Apunte la cámara al código QR físico del manubrio
-              </p>
-            </div>
+          <div className="relative w-48 h-48 mb-3.5 border-2 border-dashed border-emerald-500/70 rounded-2xl flex items-center justify-center bg-slate-950 overflow-hidden shadow-2xl">
+            {/* Viewport para inyección de video de Html5Qrcode */}
+            <div
+              id="qr-scanner-viewport"
+              className="w-full h-full [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>canvas]:hidden"
+            />
+
+            {/* Cuadro de enfoque y animación láser verde mientras la cámara está activa */}
+            {cameraState === 'active' && (
+              <div className="absolute inset-0 pointer-events-none p-3.5 flex flex-col justify-between">
+                <div className="flex justify-between">
+                  <div className="w-5 h-5 border-t-2 border-l-2 border-emerald-400 rounded-tl shadow-[0_0_8px_#10b981]" />
+                  <div className="w-5 h-5 border-t-2 border-r-2 border-emerald-400 rounded-tr shadow-[0_0_8px_#10b981]" />
+                </div>
+                <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_10px_#10b981] animate-bounce opacity-90" />
+                <div className="flex justify-between">
+                  <div className="w-5 h-5 border-b-2 border-l-2 border-emerald-400 rounded-bl shadow-[0_0_8px_#10b981]" />
+                  <div className="w-5 h-5 border-b-2 border-r-2 border-emerald-400 rounded-br shadow-[0_0_8px_#10b981]" />
+                </div>
+              </div>
+            )}
+
+            {/* Estado: Iniciando cámara */}
+            {cameraState === 'starting' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 text-center p-3">
+                <Loader2 className="w-7 h-7 text-emerald-400 animate-spin mb-2" />
+                <p className="text-xs text-slate-300 font-medium">Iniciando cámara...</p>
+              </div>
+            )}
+
+            {/* Estado: QR Escaneado con éxito */}
+            {cameraState === 'scanned' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 text-center p-3 animate-fadeIn">
+                <CheckCircle2 className="w-10 h-10 text-emerald-400 mb-2 animate-bounce" />
+                <p className="text-xs text-emerald-300 font-bold">{scannedFeedback}</p>
+                <span className="text-[10px] text-slate-400 mt-1">Listo para desbloquear</span>
+              </div>
+            )}
+
+            {/* Estado: Error o Sin Cámara (Fallback discreto) */}
+            {cameraState === 'error' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 text-center p-4">
+                <QrCode className="w-10 h-10 text-slate-600 mb-2 animate-pulse" />
+                <p className="text-xs text-slate-300 font-medium">
+                  {cameraError || 'Cámara no disponible'}
+                </p>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Usa el campo manual o los botones abajo para elegir la unidad.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Form manual input */}

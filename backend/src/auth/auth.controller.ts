@@ -13,6 +13,8 @@ import {
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendCodeDto } from './dto/resend-code.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser, UserPayload } from './decorators/current-user.decorator';
 
@@ -22,13 +24,33 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   /**
-   * Registro exclusivo para Turistas
+   * Registro exclusivo para Turistas (Genera código OTP y envía correo)
    * POST /api/auth/register
    */
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
+  }
+
+  /**
+   * Validación de código de 6 dígitos para verificar el correo
+   * POST /api/auth/verify-email
+   */
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(@Body() dto: VerifyEmailDto) {
+    return this.authService.verifyEmail(dto);
+  }
+
+  /**
+   * Reenvío de código de verificación si expiró el anterior
+   * POST /api/auth/resend-code
+   */
+  @Post('resend-code')
+  @HttpCode(HttpStatus.OK)
+  async resendCode(@Body() dto: ResendCodeDto) {
+    return this.authService.resendVerificationCode(dto);
   }
 
   /**
@@ -55,4 +77,3 @@ export class AuthController {
     };
   }
 }
-

@@ -70,14 +70,20 @@ export const AdminUsersZonesTab: React.FC<AdminUsersZonesTabProps> = ({
         <div className="p-3 space-y-2 overflow-y-auto max-h-[540px]">
           {users.map((u) => {
             const isAdmin = u.rol === 'admin';
+            const isBanned = u.estado === 'dado_de_baja';
             const isBlocked = u.estado === 'bloqueado';
+            const strikes = Number(u.infracciones_perimetro) || 0;
 
             return (
               <div
                 key={u.id}
-                className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-between gap-3 text-xs"
+                className={`p-3 rounded-xl border flex items-center justify-between gap-3 text-xs transition ${
+                  isBanned
+                    ? 'bg-rose-950/40 border-rose-800/80'
+                    : 'bg-slate-800/60 border-slate-700/60'
+                }`}
               >
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-white truncate">{u.nombre_completo}</span>
                     <span
@@ -89,19 +95,57 @@ export const AdminUsersZonesTab: React.FC<AdminUsersZonesTabProps> = ({
                     >
                       {u.rol}
                     </span>
+
+                    {/* Badge Verificado Sí/No */}
+                    {u.email_verificado ? (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        <span>Verificado</span>
+                      </span>
+                    ) : (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        No verificado
+                      </span>
+                    )}
+
+                    {/* Badge Salidas del Perímetro (Strikes 0/3 .. 3/3) */}
                     <span
-                      className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
-                        isBlocked
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                          : 'bg-emerald-500/20 text-emerald-300'
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded-md font-bold border ${
+                        strikes >= 3
+                          ? 'bg-rose-950 text-rose-200 border-rose-500 font-black animate-pulse'
+                          : strikes === 2
+                          ? 'bg-orange-950/80 text-orange-300 border-orange-600'
+                          : strikes === 1
+                          ? 'bg-amber-950/80 text-amber-300 border-amber-600'
+                          : 'bg-slate-900 text-slate-400 border-slate-700'
+                      }`}
+                    >
+                      {strikes}/3 Salidas Perímetro
+                    </span>
+
+                    {/* Badge Estado */}
+                    <span
+                      className={`text-[9px] px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wide border ${
+                        isBanned
+                          ? 'bg-rose-600 text-white border-rose-300 shadow'
+                          : isBlocked
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          : u.estado === 'pendiente_verificacion'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                       }`}
                     >
                       {u.estado}
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-400 truncate mt-0.5">{u.correo}</div>
-                  <div className="text-[10px] text-slate-400 mt-1 font-mono">
-                    {u.total_viajes} viajes • ${Number(u.gasto_total || 0).toLocaleString('es-CO')} COP
+
+                  <div className="text-[11px] text-slate-400 truncate mt-1">{u.correo}</div>
+                  <div className="text-[10px] text-slate-400 mt-1 font-mono flex items-center gap-3">
+                    <span>{u.total_viajes} viajes</span>
+                    <span>•</span>
+                    <span>${Number(u.gasto_total || 0).toLocaleString('es-CO')} COP</span>
+                    <span>•</span>
+                    <span>Doc: {u.documento_identidad}</span>
                   </div>
                 </div>
 
@@ -109,6 +153,11 @@ export const AdminUsersZonesTab: React.FC<AdminUsersZonesTabProps> = ({
                   <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[10px] text-cyan-400 flex items-center gap-1 shrink-0">
                     <Shield className="w-3 h-3" />
                     Protegido
+                  </span>
+                ) : isBanned ? (
+                  <span className="px-2.5 py-1 rounded-lg bg-rose-950 border border-rose-600 text-[10px] text-rose-300 font-bold flex items-center gap-1 shrink-0">
+                    <Ban className="w-3 h-3 text-rose-400" />
+                    Dado de baja
                   </span>
                 ) : (
                   <button

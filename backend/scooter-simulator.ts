@@ -1,5 +1,6 @@
 // backend/scooter-simulator.ts
 import { io, Socket } from 'socket.io-client';
+import * as readline from 'readline';
 
 // Configuración de Conexión
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
@@ -34,6 +35,7 @@ class ScooterHardwareSimulator {
 
   constructor() {
     this.initSocket();
+    this.initKeyboardControls();
   }
 
   private pickRandomWaypoint(excludeIndex?: number): number {
@@ -64,6 +66,66 @@ class ScooterHardwareSimulator {
 
     this.setupSocketEvents();
     this.startTelemetryLoop();
+  }
+
+  /**
+   * Controles interactivos por teclado para pruebas en vivo y sustentación:
+   * - Tecla 's': Simula salir inmediatamente del perímetro del Malecón (Lat 11.0220, Lng -74.7990).
+   * - Tecla 'r': Regresa el monopatín al interior del Malecón (Lat 11.0182, Lng -74.7952).
+   */
+  private initKeyboardControls() {
+    try {
+      if (process.stdin.isTTY) {
+        readline.emitKeypressEvents(process.stdin);
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
+
+        process.stdin.on('keypress', (str, key) => {
+          if (key.ctrl && key.name === 'c') {
+            process.exit();
+          }
+
+          const pressed = (str || key.name || '').toLowerCase();
+          if (pressed === 's') {
+            this.lat = 11.022;
+            this.lng = -74.799;
+            this.currentZoneDesc = 'FUERA DEL PERÍMETRO MALECÓN';
+            console.log(`\n🚨 [TECLA 's' PRESIONADA] Simulando SALIDA INMEDIATA del perímetro del Malecón!`);
+            console.log(`📍 Nueva posición: Lat ${this.lat}, Lng ${this.lng} (FUERA DEL POLÍGONO)`);
+            this.sendImmediateTelemetry();
+          } else if (pressed === 'r') {
+            this.lat = 11.0182;
+            this.lng = -74.7952;
+            this.currentZoneDesc = 'Estación Puerta de Oro (P1 - DENTRO DEL PERÍMETRO)';
+            console.log(`\n🚲 [TECLA 'r' PRESIONADA] Regresando monopatín al INTERIOR del Malecón!`);
+            console.log(`📍 Nueva posición: Lat ${this.lat}, Lng ${this.lng} (DENTRO DEL POLÍGONO)`);
+            this.sendImmediateTelemetry();
+          }
+        });
+
+        console.log(`🎮 [CONTROLES INTERACTIVOS DE TECLADO PARA SUSTENTACIÓN]:`);
+        console.log(`   👉 Presiona tecla [s] : Simula SALIR del perímetro (Lat 11.0220, Lng -74.7990)`);
+        console.log(`   👉 Presiona tecla [r] : REGRESA al interior del Malecón (Lat 11.0182, Lng -74.7952)`);
+        console.log(`   👉 Presiona [Ctrl+C]  : Salir del simulador\n`);
+      }
+    } catch (err) {
+      console.log('Teclado interactivo TTY no disponible en este entorno.');
+    }
+  }
+
+  private sendImmediateTelemetry() {
+    const payload = {
+      scooterId: SCOOTER_ID,
+      lat: this.lat,
+      lng: this.lng,
+      speed: this.locked ? 0 : Math.max(5, this.speed),
+      battery: Math.round(this.battery),
+      locked: this.locked,
+    };
+    this.socket.emit('telemetry:update', payload);
+    console.log(
+      `📡 [TELEMETRÍA INMEDIATA] Transmitido: Lat ${this.lat}, Lng ${this.lng} | Bloqueado: ${this.locked}`,
+    );
   }
 
   private setupSocketEvents() {
@@ -115,19 +177,24 @@ class ScooterHardwareSimulator {
     });
 
     // 3. Evento servidor: Regular límite de velocidad por Geocerca (PostGIS)
-    this.socket.on('scooter:set_speed_limit', (data: { scooterId?: string; maxSpeed: number; zoneName: string; reason: string }) => {
-      if (data?.scooterId && data.scooterId !== SCOOTER_ID) return;
-      this.maxAllowedSpeed = data.maxSpeed;
-      this.currentZoneDesc = data.zoneName;
+    this.socket.on(
+      'scooter:set_speed_limit',
+      (data: { scooterId?: string; maxSpeed: number; zoneName: string; reason: string }) => {
+        if (data?.scooterId && data.scooterId !== SCOOTER_ID) return;
+        this.maxAllowedSpeed = data.maxSpeed;
+        this.currentZoneDesc = data.zoneName;
 
-      if (this.speed > this.maxAllowedSpeed) {
-        this.speed = this.maxAllowedSpeed;
-      }
+        if (this.speed > this.maxAllowedSpeed) {
+          this.speed = this.maxAllowedSpeed;
+        }
 
-      if (!this.manualControl) {
-        console.log(`⚡ [REGULACIÓN GEOCERCA] Zona: "${data.zoneName}" | Límite Máximo: ${data.maxSpeed} km/h (${data.reason})`);
-      }
-    });
+        if (!this.manualControl) {
+          console.log(
+            `⚡ [REGULACIÓN GEOCERCA] Zona: "${data.zoneName}" | Límite Máximo: ${data.maxSpeed} km/h (${data.reason})`,
+          );
+        }
+      },
+    );
 
     // 4. Evento servidor: Parada de Emergencia (Salida de Perímetro o Alerta de Robo)
     this.socket.on('scooter:emergency_stop', (data: { scooterId?: string; reason: string }) => {
@@ -183,7 +250,9 @@ class ScooterHardwareSimulator {
         this.locked = data.locked !== false;
         this.isMoving = !this.locked;
         this.manualControl = false;
-        console.log(`\n🚚 [RECOLOCADO POR ADMIN] ${SCOOTER_ID} movido a [${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}] | Bat: ${this.battery}%\n`);
+        console.log(
+          `\n🚚 [RECOLOCADO POR ADMIN] ${SCOOTER_ID} movido a [${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}] | Bat: ${this.battery}%\n`,
+        );
       },
     );
 
@@ -200,7 +269,9 @@ class ScooterHardwareSimulator {
         if (this.locked) {
           this.speed = 0.0;
         }
-        console.log(`\n🛡️ [ALARMA LIBERADA POR ADMIN] ${SCOOTER_ID} | Candado: ${this.locked ? 'BLOQUEADO' : 'DESBLOQUEADO'}\n`);
+        console.log(
+          `\n🛡️ [ALARMA LIBERADA POR ADMIN] ${SCOOTER_ID} | Candado: ${this.locked ? 'BLOQUEADO' : 'DESBLOQUEADO'}\n`,
+        );
       },
     );
 
@@ -215,13 +286,14 @@ class ScooterHardwareSimulator {
       this.isMoving = false;
       this.manualControl = false;
       this.currentZoneDesc = ROUTE_WAYPOINTS[0].desc;
-      console.log(`\n🔄 [RESETEO DE FLOTA] ${SCOOTER_ID} restablecido en Estación P1 (100% batería, bloqueado)\n`);
+      console.log(
+        `\n🔄 [RESETEO DE FLOTA] ${SCOOTER_ID} restablecido en Estación P1 (100% batería, bloqueado)\n`,
+      );
     });
   }
 
   /**
    * Bucle de telemetría IoT periódico: cada 5 segundos reporta coordenadas, batería y velocidad
-   * (se detiene automáticamente cuando el usuario toma el control manual)
    */
   private startTelemetryLoop() {
     this.telemetryTimer = setInterval(() => {
@@ -229,7 +301,7 @@ class ScooterHardwareSimulator {
         return;
       }
 
-      // Si el monopatín está en marcha (desbloqueado), avanza de forma aleatoria por el Gran Malecón
+      // Si el monopatín está en marcha (desbloqueado), avanza por el Gran Malecón
       if (!this.locked && this.isMoving) {
         const target = ROUTE_WAYPOINTS[this.targetWaypointIndex];
         const dLat = target.lat - this.lat;
@@ -246,13 +318,14 @@ class ScooterHardwareSimulator {
           this.lng += (dLng / dist) * step;
         }
 
-        // Fluctuación aleatoria realista dentro del límite permitido de la zona
         const minSpeed = Math.min(7, this.maxAllowedSpeed);
         this.speed = Number(
-          Math.min(this.maxAllowedSpeed, minSpeed + Math.random() * Math.max(2, this.maxAllowedSpeed - minSpeed)).toFixed(1),
+          Math.min(
+            this.maxAllowedSpeed,
+            minSpeed + Math.random() * Math.max(2, this.maxAllowedSpeed - minSpeed),
+          ).toFixed(1),
         );
 
-        // Consumo gradual de batería (-0.1% cada ciclo de 5 segundos)
         this.battery = Math.max(0, Number((this.battery - 0.1).toFixed(2)));
       } else {
         this.speed = 0.0;
@@ -274,9 +347,9 @@ class ScooterHardwareSimulator {
       const statusIcon = this.locked ? '🔒' : '🔓';
       console.log(
         `📡 [TELEMETRÍA] ${statusIcon} Estado: ${this.locked ? 'Bloqueado ' : 'En marcha '} | ` +
-        `Vel: ${this.speed.toString().padStart(4, ' ')} km/h (Max: ${this.maxAllowedSpeed} km/h) | ` +
-        `Bat: ${Math.round(this.battery)}% | ` +
-        `Coords: [${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}] (${this.currentZoneDesc})`
+          `Vel: ${this.speed.toString().padStart(4, ' ')} km/h (Max: ${this.maxAllowedSpeed} km/h) | ` +
+          `Bat: ${Math.round(this.battery)}% | ` +
+          `Coords: [${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}] (${this.currentZoneDesc})`,
       );
     }, 5000);
   }
@@ -284,4 +357,3 @@ class ScooterHardwareSimulator {
 
 // Ejecución del simulador
 new ScooterHardwareSimulator();
-

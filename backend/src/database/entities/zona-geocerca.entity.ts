@@ -1,3 +1,4 @@
+// backend/src/database/entities/zona-geocerca.entity.ts
 import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 
 @Entity('zonas_geocercas')
@@ -12,7 +13,7 @@ export class ZonaGeocerca {
     type: 'varchar',
     length: 20,
   })
-  tipo: 'normal' | 'peatonal' | 'parqueo' | 'prohibida';
+  tipo: 'normal' | 'peatonal' | 'parqueo' | 'prohibida' | 'perimetro';
 
   @Column({ type: 'int', default: 20 })
   limite_velocidad: number;

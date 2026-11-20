@@ -11,6 +11,8 @@ import {
   resetDevTrips,
   getScooters,
   getPublicZones,
+  logout,
+  getProfile,
 } from '../services/api';
 import { ScannerModal } from '../components/ScannerModal';
 import { ActiveTripPanel } from '../components/ActiveTripPanel';
@@ -27,6 +29,7 @@ import {
 } from '../types';
 import {
   MALECON_GEOFENCES,
+  OPERATIONAL_PERIMETER_COORDINATES,
   evaluateGeofence,
   ScooterAlarmSound,
   ZoneSpeedOverride,
@@ -72,6 +75,15 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
   const [idleSecondsOutsideParking, setIdleSecondsOutsideParking] = useState(0);
   const [systemBanner, setSystemBanner] = useState<string | null>(null);
   const [operatorNotice, setOperatorNotice] = useState<string | null>(null);
+  const [perimeterWarning, setPerimeterWarning] = useState<{
+    strike: number;
+    maxStrikes: number;
+    message: string;
+  } | null>(null);
+  const [bannedModal, setBannedModal] = useState<{
+    reason: string;
+    strikes: number;
+  } | null>(null);
   const zoneOverridesRef = useRef<ZoneSpeedOverride[]>([]);
 
   // Modales y estados
@@ -103,6 +115,33 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       setIsTripPanelMinimized(false);
     }
   }, [activeTrip]);
+
+  // Carga y sincronización del estado persistente del usuario en Neon (infracciones de perímetro y bloqueo)
+  useEffect(() => {
+    getProfile()
+      .then((freshUser: any) => {
+        if (!freshUser) return;
+        if (
+          freshUser.estado === 'dado_de_baja' ||
+          freshUser.estado === 'bloqueado' ||
+          (freshUser.infracciones_perimetro && freshUser.infracciones_perimetro >= 3)
+        ) {
+          setBannedModal({
+            reason:
+              'Tu cuenta ha sido dada de baja por exceder el límite de 3 salidas del área permitida del Gran Malecón.',
+            strikes: freshUser.infracciones_perimetro || 3,
+          });
+          logout();
+        } else if (freshUser.infracciones_perimetro && freshUser.infracciones_perimetro > 0) {
+          setPerimeterWarning({
+            strike: freshUser.infracciones_perimetro,
+            maxStrikes: 3,
+            message: `Advertencia ${freshUser.infracciones_perimetro}/3: Saliste del área autorizada del Malecón. Al llegar a 3 salidas tu cuenta será dada de baja.`,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const activeUserId = currentUser?.id || TEST_USER_ID;
 
@@ -305,6 +344,20 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
     }).addTo(map);
 
     L.control.zoom({ position: 'topright' }).addTo(map);
+
+    // Dibujar Perímetro Operativo Gran Malecón con borde rojo punteado (Polígono oficial PostGIS)
+    const perimPolygon = L.polygon(OPERATIONAL_PERIMETER_COORDINATES, {
+      color: '#ef4444',
+      weight: 2.5,
+      dashArray: '6, 6',
+      fillColor: '#ef4444',
+      fillOpacity: 0.04,
+    }).addTo(map);
+
+    perimPolygon.bindTooltip(
+      '<strong>Límite Perimetral Gran Malecón</strong><br/><span style="color:#f87171;">Área autorizada de circulación. Máximo 3 salidas antes de baja automática.</span>',
+      { sticky: true },
+    );
 
     // Dibujar Geocercas en el mapa
     MALECON_GEOFENCES.forEach((geo) => {
@@ -604,6 +657,37 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
         .catch(() => {});
     };
 
+    const handlePerimeterWarning = (data: {
+      scooterId?: string;
+      userId?: string;
+      strike: number;
+      maxStrikes: number;
+      message: string;
+    }) => {
+      setPerimeterWarning(data);
+    };
+
+    const handleUserBanned = (data: {
+      userId?: string;
+      scooterId?: string;
+      strikes: number;
+      reason: string;
+    }) => {
+      alarmSoundRef.current.stop();
+      setIsAlarmAudioActive(false);
+      setIsEmergencyLocked(true);
+      setIsManualControl(false);
+      setShowJoystick(false);
+      setActiveTrip(null);
+      setPerimeterWarning({
+        strike: 3,
+        maxStrikes: 3,
+        message: data.reason,
+      });
+      setBannedModal({ reason: data.reason, strikes: data.strikes });
+      logout();
+    };
+
     socket.on('connect', handleConnect);
     socket.on('telemetry:broadcast', handleTelemetry);
     socket.on('scooter:emergency_stop', handleEmergencyStop);
@@ -613,6 +697,8 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
     socket.on('scooter:alarm_cleared', handleAlarmCleared);
     socket.on('scooter:relocated', handleScooterRelocated);
     socket.on('zones:updated', handleZonesUpdated);
+    socket.on('trip:perimeter_warning', handlePerimeterWarning);
+    socket.on('user:banned', handleUserBanned);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -624,6 +710,8 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       socket.off('scooter:alarm_cleared', handleAlarmCleared);
       socket.off('scooter:relocated', handleScooterRelocated);
       socket.off('zones:updated', handleZonesUpdated);
+      socket.off('trip:perimeter_warning', handlePerimeterWarning);
+      socket.off('user:banned', handleUserBanned);
     };
   }, [activeTrip?.scooterId, loadInitialFleet, updateScooterMarker]);
 
@@ -745,33 +833,8 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
 
       const currentGeo = evaluateGeofence(state.lat, state.lng);
 
-      // Si ya se encuentra fuera del perímetro, activar parada inmediata + candado + alarma
-      if (!currentGeo.insidePerimeter) {
-        state.speed = 0;
-        state.locked = true;
-        isEmergencyLockedRef.current = true;
-        setIsEmergencyLocked(true);
-        setIsManualControl(false);
-        setShowJoystick(false);
-        setAlarmReason(
-          'Saliste de los límites del Gran Malecón. Motor apagado, candado cerrado y alarma 85 dB activada.',
-        );
-        alarmSoundRef.current.start();
-        setIsAlarmAudioActive(true);
-        if (mapInstanceRef.current?.keyboard) {
-          mapInstanceRef.current.keyboard.enable();
-        }
-        socket.emit('telemetry:update', {
-          scooterId,
-          lat: state.lat,
-          lng: state.lng,
-          speed: 0,
-          battery: Math.round(state.battery),
-          locked: false,
-        });
-        updateScooterMarker(scooterId, state.lat, state.lng, 0, state.battery, true, true);
-        return;
-      }
+      // Si se encuentra fuera del perímetro del Malecón, velocidad regulada a 5 km/h para retorno (Sistema 3 Strikes)
+      const allowedSpeed = !currentGeo.insidePerimeter ? 5.0 : currentGeo.maxSpeed;
 
       // Si se agotó la batería completamente, apagar motor
       if (state.battery <= 0) {
@@ -780,15 +843,15 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
         vy = 0;
       }
 
-      // Calcular velocidad con límite estricto de zona (10 peatonal/parqueo, 20 normal)
-      const targetSpeed = mag * currentGeo.maxSpeed;
+      // Calcular velocidad con límite estricto de zona (5 km/h fuera de perímetro, 10 peatonal/parqueo, 20 normal)
+      const targetSpeed = mag * allowedSpeed;
       let nextSpeed = state.speed;
       if (targetSpeed > nextSpeed) {
         nextSpeed = Math.min(targetSpeed, nextSpeed + 4.0);
       } else {
         nextSpeed = Math.max(targetSpeed, nextSpeed - 5.0);
       }
-      nextSpeed = Number(Math.min(nextSpeed, currentGeo.maxSpeed).toFixed(1));
+      nextSpeed = Number(Math.min(nextSpeed, allowedSpeed).toFixed(1));
       if (mag === 0 && nextSpeed < 0.3) {
         nextSpeed = 0;
       }
@@ -812,54 +875,34 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       }
 
       const nextGeo = evaluateGeofence(nextLat, nextLng, zoneOverridesRef.current);
+      const isOutside = !nextGeo.insidePerimeter;
+      const wasInside = currentGeo.insidePerimeter;
       const now = Date.now();
 
-      // Verificar cruce de límite del perímetro en este paso
-      if (!nextGeo.insidePerimeter) {
-        state.lat = nextLat;
-        state.lng = nextLng;
-        state.speed = 0;
-        state.locked = true;
-        isEmergencyLockedRef.current = true;
-        setIsEmergencyLocked(true);
-        setIsManualControl(false);
-        setShowJoystick(false);
-        setAlarmReason(
-          'Saliste de los límites del Gran Malecón. Motor apagado, candado cerrado y alarma 85 dB activada.',
-        );
-        alarmSoundRef.current.start();
-        setIsAlarmAudioActive(true);
-        if (mapInstanceRef.current?.keyboard) {
-          mapInstanceRef.current.keyboard.enable();
-        }
+      // Detección de cruce de límite de perímetro para telemetría inmediata de strikes
+      const crossedBoundary = isOutside !== !wasInside;
 
-        const outPayload: TelemetryBroadcast = {
-          scooterId,
-          lat: nextLat,
-          lng: nextLng,
-          speed: 0,
-          battery: Math.round(state.battery),
-          locked: true,
-          zoneName: 'Fuera del Gran Malecón',
-          zoneType: 'prohibida',
-          maxSpeed: 0,
-          isInsideParkingZone: false,
-          emergencyStopped: true,
-          timestamp: new Date().toISOString(),
-        };
-        setLiveTelemetry(outPayload);
-        updateScooterMarker(scooterId, nextLat, nextLng, 0, state.battery, true, true);
+      const effectiveMaxSpeed = isOutside ? 5.0 : nextGeo.maxSpeed;
+      nextSpeed = Number(Math.min(nextSpeed, effectiveMaxSpeed).toFixed(1));
+      state.lat = nextLat;
+      state.lng = nextLng;
+      state.speed = nextSpeed;
+      state.locked = false;
 
-        // Enviar locked: false en el paquete que cruza el límite para que el backend registre 'fuera_perimetro', bloquee BD y alerte al Dashboard
+      // Actualizar marcador suavemente en Leaflet
+      updateScooterMarker(scooterId, nextLat, nextLng, nextSpeed, state.battery, false, false);
+
+      // Si cruzó el límite (entrada o salida), emitir telemetría inmediatamente para actualizar strikes
+      if (crossedBoundary) {
         socket.emit('telemetry:update', {
           scooterId,
           lat: nextLat,
           lng: nextLng,
-          speed: 0,
+          speed: nextSpeed,
           battery: Math.round(state.battery),
           locked: false,
         });
-        return;
+        lastEmitAtRef.current = now;
       }
 
       // Clamping inmediato de velocidad si acaba de entrar en zona peatonal o estación
@@ -1264,6 +1307,79 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       />
 
       <ReceiptModal receipt={receipt} onClose={() => setReceipt(null)} />
+
+      {/* Banner de Advertencia de Salida de Perímetro (Strikes 1 y 2) */}
+      {perimeterWarning && (
+        <div className="absolute top-16 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-50 bg-rose-950/95 border-2 border-rose-500 rounded-2xl p-4 shadow-2xl backdrop-blur-xl animate-bounce">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-600/30 border border-rose-500/50 flex items-center justify-center shrink-0 text-rose-400 font-bold text-xl">
+              ⚠️
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-black uppercase tracking-wider text-rose-400">
+                  Advertencia {perimeterWarning.strike}/3 de Perímetro
+                </span>
+                <span className="text-[10px] bg-rose-900 text-rose-200 px-2 py-0.5 rounded-full font-bold shrink-0">
+                  Velocidad: 5 km/h
+                </span>
+              </div>
+              <p className="text-xs text-rose-100 font-semibold mt-1">
+                {perimeterWarning.message}
+              </p>
+              <p className="text-[10px] text-rose-300 mt-1">
+                Regresa inmediatamente al área autorizada del Malecón delimitada por la línea roja punteada.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPerimeterWarning(null)}
+              className="text-rose-400 hover:text-white text-xs font-bold px-2 py-1 rounded-lg bg-rose-900/60"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Bloqueante Definitivo: Cuenta Dada de Baja por 3 Strikes */}
+      {bannedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-md bg-slate-900 border-2 border-rose-600 rounded-3xl p-6 shadow-2xl text-center space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-rose-600/20 border-2 border-rose-500 flex items-center justify-center text-rose-400 mx-auto text-3xl font-black">
+              🚫
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-rose-100 uppercase tracking-tight">
+                Cuenta Dada de Baja Definitiva
+              </h2>
+              <span className="inline-block mt-1 text-[11px] font-bold text-rose-400 bg-rose-950/80 px-2.5 py-0.5 rounded-full border border-rose-700">
+                Infracciones acumuladas: {bannedModal.strikes} de 3
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800">
+              {bannedModal.reason}
+            </p>
+            <p className="text-[11px] text-rose-400">
+              Tu viaje activo ha sido cancelado y el monopatín ha sido bloqueado remotamente. La sesión ha sido cerrada.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setBannedModal(null);
+                if (onLogout) {
+                  onLogout();
+                } else {
+                  window.location.reload();
+                }
+              }}
+              className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-rose-950/80 transition"
+            >
+              Entendido • Salir al Inicio de Sesión
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

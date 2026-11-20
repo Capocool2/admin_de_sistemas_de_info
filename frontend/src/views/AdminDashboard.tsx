@@ -40,7 +40,7 @@ import {
   SecurityAlert,
   TelemetryBroadcast,
 } from '../types';
-import { evaluateGeofence, MALECON_GEOFENCES } from '../utils/geofence';
+import { evaluateGeofence, MALECON_GEOFENCES, OPERATIONAL_PERIMETER_COORDINATES } from '../utils/geofence';
 import { AdminFleetPanel, FleetFilter } from '../components/admin/AdminFleetPanel';
 import { AdminScooterDrawer } from '../components/admin/AdminScooterDrawer';
 import { AdminAlertsPanel } from '../components/admin/AdminAlertsPanel';
@@ -344,6 +344,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       )
       .addTo(map);
 
+    // Dibujar Perímetro Operativo Oficial Gran Malecón (borde rojo punteado)
+    L.polygon(OPERATIONAL_PERIMETER_COORDINATES, {
+      color: '#ef4444',
+      weight: 2.5,
+      dashArray: '6, 6',
+      fillColor: '#ef4444',
+      fillOpacity: 0.04,
+    })
+      .addTo(map)
+      .bindTooltip('<strong>Perímetro Operativo Oficial Gran Malecón</strong><br/><span style="color:#f87171;">Límite de 3 infracciones antes de baja automática</span>');
+
     MALECON_GEOFENCES.forEach((geo) => {
       let color = '#38bdf8';
       let fillColor = '#0284c7';
@@ -491,8 +502,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       setPendingAlertsDbCount((prev) => prev + 1);
     };
 
-    const handleSecurityAlert = (data: any) => upsertLiveAlert(data, 'robo');
+    const handleSecurityAlert = (data: any) => {
+      upsertLiveAlert(data, 'fuera_perimetro');
+      if (data?.type === 'salida_perimetro') {
+        loadSecondaryData();
+        loadFleetFromServer();
+      }
+    };
     const handleMaintenanceAlert = (data: any) => upsertLiveAlert(data, 'bateria_baja');
+
+    const handleUserBannedNotice = (data: any) => {
+      showToast('error', `Usuario ${data.userName || data.userEmail || data.userId} ha sido dado de baja por exceder 3 salidas del perímetro.`);
+      loadSecondaryData();
+      loadFleetFromServer();
+      loadAlertsFromServer();
+    };
 
     const handleResetEvent = () => {
       setSelectedScooterId(null);
@@ -508,6 +532,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
     socket.on('telemetry:broadcast', handleTelemetry);
     socket.on('alert:security', handleSecurityAlert);
     socket.on('alert:maintenance', handleMaintenanceAlert);
+    socket.on('user:banned_notice', handleUserBannedNotice);
     socket.on('scooter:reset', handleResetEvent);
     socket.on('alerts:updated', handleAlertsUpdated);
     socket.on('zones:updated', handleZonesUpdated);
@@ -517,6 +542,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       socket.off('telemetry:broadcast', handleTelemetry);
       socket.off('alert:security', handleSecurityAlert);
       socket.off('alert:maintenance', handleMaintenanceAlert);
+      socket.off('user:banned_notice', handleUserBannedNotice);
       socket.off('scooter:reset', handleResetEvent);
       socket.off('alerts:updated', handleAlertsUpdated);
       socket.off('zones:updated', handleZonesUpdated);

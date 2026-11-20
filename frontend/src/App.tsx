@@ -4,12 +4,17 @@ import { Smartphone, LayoutDashboard, LogOut } from 'lucide-react';
 import { UserMap } from './views/UserMap';
 import { AdminDashboard } from './views/AdminDashboard';
 import { Login } from './views/Login';
+import { Register } from './views/Register';
+import { VerifyEmail } from './views/VerifyEmail';
 import { getStoredUser, logout } from './services/api';
 import { AuthUser } from './types';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getStoredUser());
   const [adminActiveTab, setAdminActiveTab] = useState<'dashboard' | 'tourist_preview'>('dashboard');
+  const [authView, setAuthView] = useState<'login' | 'register' | 'verify'>('login');
+  const [emailToVerify, setEmailToVerify] = useState<string>('');
+  const [loginSuccessNotice, setLoginSuccessNotice] = useState<string | null>(null);
 
   useEffect(() => {
     // Sincronizar usuario guardado en localStorage
@@ -22,17 +27,58 @@ export function App() {
   const handleLoginSuccess = (user: AuthUser) => {
     setCurrentUser(user);
     setAdminActiveTab('dashboard');
+    setAuthView('login');
+    setLoginSuccessNotice(null);
   };
 
   const handleLogout = () => {
     logout();
     setCurrentUser(null);
     setAdminActiveTab('dashboard');
+    setAuthView('login');
+    setLoginSuccessNotice(null);
   };
 
-  // 1. Si no hay sesión iniciada, mostrar pantalla de Login / Registro
+  // 1. Control de vistas para usuarios no autenticados
   if (!currentUser) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    if (authView === 'register') {
+      return (
+        <Register
+          onRegisterSuccess={(correo) => {
+            setEmailToVerify(correo);
+            setAuthView('verify');
+          }}
+          onNavigateToLogin={() => setAuthView('login')}
+        />
+      );
+    }
+
+    if (authView === 'verify') {
+      return (
+        <VerifyEmail
+          initialEmail={emailToVerify}
+          onVerificationSuccess={(correo) => {
+            setEmailToVerify(correo);
+            setLoginSuccessNotice('Correo verificado exitosamente. Ahora ingresa tus credenciales para acceder.');
+            setAuthView('login');
+          }}
+          onNavigateToLogin={() => setAuthView('login')}
+        />
+      );
+    }
+
+    return (
+      <Login
+        prefilledEmail={emailToVerify}
+        initialSuccessMessage={loginSuccessNotice}
+        onLoginSuccess={handleLoginSuccess}
+        onNavigateToRegister={() => setAuthView('register')}
+        onNavigateToVerify={(email) => {
+          if (email) setEmailToVerify(email);
+          setAuthView('verify');
+        }}
+      />
+    );
   }
 
   // 2. Control de Acceso Basado en Roles (RBAC):
