@@ -184,20 +184,22 @@ export async function getActiveTrip(usuarioId?: string) {
   return data.data;
 }
 
-export async function forceCancelTrip(viajeId: string) {
+export async function forceCancelTrip(viajeId: string, adminPassword: string) {
   const response = await fetch(`${API_BASE_URL}/api/trips/force-cancel/${viajeId}`, {
     method: 'POST',
     headers: getHeaders(),
+    body: JSON.stringify({ adminPassword }),
   });
-  return response.json();
+  return parseJsonOrThrow(response, 'No fue posible cancelar el viaje');
 }
 
-export async function resetDevTrips() {
+export async function resetDevTrips(adminPassword: string) {
   const response = await fetch(`${API_BASE_URL}/api/trips/reset-dev`, {
     method: 'POST',
     headers: getHeaders(),
+    body: JSON.stringify({ adminPassword }),
   });
-  return response.json();
+  return parseJsonOrThrow(response, 'No fue posible reiniciar la flota');
 }
 
 export async function getScooters() {
@@ -260,12 +262,13 @@ export async function getAdminSummary() {
 export async function updateAdminScooterStatus(
   scooterId: string,
   estado: 'disponible' | 'mantenimiento',
+  adminPassword: string,
   deferIfInUse = false,
 ) {
   const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/status`, {
     method: 'PATCH',
     headers: getHeaders(),
-    body: JSON.stringify({ estado, deferIfInUse }),
+    body: JSON.stringify({ estado, deferIfInUse, adminPassword }),
   });
   return parseJsonOrThrow(response, 'No fue posible actualizar el estado del monopatín');
 }
@@ -273,29 +276,75 @@ export async function updateAdminScooterStatus(
 export async function relocateAdminScooter(
   scooterId: string,
   stationId: 'P1' | 'P2' | 'P3',
+  adminPassword: string,
   rechargeBattery = true,
 ) {
   const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/relocate`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ stationId, rechargeBattery }),
+    body: JSON.stringify({ stationId, rechargeBattery, adminPassword }),
   });
   return parseJsonOrThrow(response, 'No fue posible recolocar el monopatín');
 }
 
-export async function clearAdminScooterLock(scooterId: string) {
+export async function dispatchAdminScooterRecovery(
+  scooterId: string,
+  adminPassword: string,
+  stationId?: 'P1' | 'P2' | 'P3',
+  rechargeBattery = true,
+) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/admin/scooters/${scooterId}/dispatch-recovery`,
+    {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ stationId, rechargeBattery, adminPassword }),
+    },
+  );
+  return parseJsonOrThrow(
+    response,
+    'No fue posible enviar equipo de búsqueda por el monopatín',
+  );
+}
+
+export async function scheduleAdminFreeEnd(
+  scooterId: string,
+  adminPassword: string,
+  reason?: string,
+  delayMinutes = 5,
+) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/admin/scooters/${scooterId}/schedule-free-end`,
+    {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ reason, delayMinutes, adminPassword }),
+    },
+  );
+  return parseJsonOrThrow(
+    response,
+    'No fue posible programar la finalización gratuita en 5 minutos',
+  );
+}
+
+export async function clearAdminScooterLock(scooterId: string, adminPassword: string) {
   const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/clear-lock`, {
     method: 'POST',
     headers: getHeaders(),
+    body: JSON.stringify({ adminPassword }),
   });
   return parseJsonOrThrow(response, 'No fue posible liberar el bloqueo');
 }
 
-export async function sendAdminScooterNotice(scooterId: string, message: string) {
+export async function sendAdminScooterNotice(
+  scooterId: string,
+  message: string,
+  adminPassword: string,
+) {
   const response = await fetch(`${API_BASE_URL}/api/admin/scooters/${scooterId}/notice`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, adminPassword }),
   });
   return parseJsonOrThrow(response, 'No fue posible enviar el aviso al turista');
 }
@@ -310,10 +359,11 @@ export async function getAdminAlerts(estado?: 'pendiente' | 'atendida') {
   return data.data || { alerts: [], pendingCount: 0 };
 }
 
-export async function attendAdminAlert(alertId: string) {
+export async function attendAdminAlert(alertId: string, adminPassword: string) {
   const response = await fetch(`${API_BASE_URL}/api/admin/alerts/${alertId}/attend`, {
     method: 'PATCH',
     headers: getHeaders(),
+    body: JSON.stringify({ adminPassword }),
   });
   return parseJsonOrThrow(response, 'No fue posible marcar la alerta como atendida');
 }
@@ -330,11 +380,12 @@ export async function getAdminUsers() {
 export async function updateAdminUserStatus(
   userId: string,
   estado: 'activo' | 'bloqueado',
+  adminPassword: string,
 ) {
   const response = await fetch(`${API_BASE_URL}/api/admin/users/${userId}/status`, {
     method: 'PATCH',
     headers: getHeaders(),
-    body: JSON.stringify({ estado }),
+    body: JSON.stringify({ estado, adminPassword }),
   });
   return parseJsonOrThrow(response, 'No fue posible actualizar la cuenta del usuario');
 }
@@ -355,11 +406,12 @@ export async function updateAdminZone(
     tarifa_minuto?: number;
     applyRateToAllZones?: boolean;
   },
+  adminPassword: string,
 ) {
   const response = await fetch(`${API_BASE_URL}/api/admin/zones/${zoneId}`, {
     method: 'PATCH',
     headers: getHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, adminPassword }),
   });
   return parseJsonOrThrow(response, 'No fue posible actualizar la configuración de zona');
 }

@@ -1,14 +1,16 @@
 // frontend/src/components/admin/AdminScooterDrawer.tsx
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   BatteryCharging,
+  Clock,
   Crosshair,
   MapPin,
   MessageSquare,
   RotateCcw,
   Send,
   ShieldCheck,
+  Truck,
   Unlock,
   User,
   Wrench,
@@ -23,6 +25,8 @@ interface AdminScooterDrawerProps {
   onClose: () => void;
   onToggleFollow: (scooterId: string) => void;
   onRelocate: (scooterId: string, stationId: 'P1' | 'P2' | 'P3') => Promise<void>;
+  onDispatchRecovery: (scooterId: string, stationId?: 'P1' | 'P2' | 'P3') => Promise<void>;
+  onScheduleFreeEnd: (scooterId: string, reason?: string) => Promise<void>;
   onChangeStatus: (
     scooterId: string,
     estado: 'disponible' | 'mantenimiento',
@@ -46,17 +50,43 @@ export const AdminScooterDrawer: React.FC<AdminScooterDrawerProps> = ({
   onClose,
   onToggleFollow,
   onRelocate,
+  onDispatchRecovery,
+  onScheduleFreeEnd,
   onChangeStatus,
   onClearLock,
   onSendNotice,
   onForceCancelBlockedTrip,
 }) => {
   const [noticeText, setNoticeText] = useState('');
+  const [recallReasonText, setRecallReasonText] = useState('');
+  const [recallRemainingSec, setRecallRemainingSec] = useState(0);
 
   const hasActiveTrip = Boolean(unit.activeTripId);
   const isBlocked = unit.estado === 'bloqueado';
   const isMaintenance = unit.estado === 'mantenimiento';
   const isInUse = unit.estado === 'en uso';
+  const isLostOrOutsideParking =
+    Boolean(unit.outOfPerimeter) || isBlocked || unit.isInsideParkingZone === false;
+
+  useEffect(() => {
+    if (!unit.recallDeadlineAt) {
+      setRecallRemainingSec(0);
+      return;
+    }
+    const deadlineMs = new Date(unit.recallDeadlineAt).getTime();
+    const updateSec = () => {
+      setRecallRemainingSec(Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000)));
+    };
+    updateSec();
+    const interval = setInterval(updateSec, 1000);
+    return () => clearInterval(interval);
+  }, [unit.recallDeadlineAt]);
+
+  const formatCountdown = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   const handleNoticeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,6 +240,54 @@ export const AdminScooterDrawer: React.FC<AdminScooterDrawerProps> = ({
                 : 'Programar mantenimiento al terminar viaje'}
             </span>
           </button>
+
+          {/* Medida de seguridad: finalizar en 5 minutos sin cobro para revisar monopatín */}
+          <div className="p-2.5 rounded-xl bg-amber-950/35 border border-amber-700/60 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold text-amber-300 flex items-center gap-1 uppercase tracking-wide">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                Revisión urgente (Fin 5 min gratis)
+              </span>
+              {unit.recallDeadlineAt && (
+                <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-mono text-[10px] font-extrabold">
+                  {formatCountdown(recallRemainingSec)}
+                </span>
+              )}
+            </div>
+
+            {unit.recallDeadlineAt ? (
+              <p className="text-[11px] text-amber-200 leading-snug">
+                Turista notificado. El viaje finalizará automáticamente en{' '}
+                <strong>{formatCountdown(recallRemainingSec)}</strong> sin cobro ($0 COP) y pasará a mantenimiento.
+              </p>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={recallReasonText}
+                  onChange={(e) => setRecallReasonText(e.target.value)}
+                  placeholder="Motivo (ej: Revisión preventiva de frenos)"
+                  maxLength={180}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-[11px] focus:outline-none focus:border-amber-500"
+                />
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => {
+                    onScheduleFreeEnd(
+                      unit.scooterId,
+                      recallReasonText.trim() || undefined,
+                    );
+                    setRecallReasonText('');
+                  }}
+                  className="w-full py-1.5 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-slate-950 font-bold text-[11px] flex items-center justify-center gap-1.5 transition"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Avisar y finalizar viaje en 5 min (Sin cobro)</span>
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -242,6 +320,56 @@ export const AdminScooterDrawer: React.FC<AdminScooterDrawerProps> = ({
       {/* Acciones operativas cuando NO hay viaje activo */}
       {!hasActiveTrip && (
         <div className="space-y-2 pt-1 border-t border-slate-800">
+          {unit.recoveryInProgress ? (
+            <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-500/70 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-bold text-indigo-200">
+                <span className="flex items-center gap-1.5">
+                  <Truck className="w-3.5 h-3.5 text-indigo-400 animate-bounce" />
+                  En búsqueda hacia parqueo
+                </span>
+                <span className="font-mono text-indigo-300">{unit.recoveryProgress ?? 0}%</span>
+              </div>
+              <p className="text-[10px] text-indigo-200/90 truncate">
+                Destino: {unit.recoveryStationName || 'Estación autorizada'}
+              </p>
+              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-indigo-400 transition-all duration-500"
+                  style={{ width: `${unit.recoveryProgress ?? 0}%` }}
+                />
+              </div>
+            </div>
+          ) : isLostOrOutsideParking ? (
+            <div className="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-700/60 space-y-1.5">
+              <span className="text-[10px] font-bold text-indigo-300 flex items-center gap-1 uppercase tracking-wide">
+                <Truck className="w-3.5 h-3.5 text-indigo-400" />
+                Monopatín perdido / fuera de parqueo
+              </span>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => onDispatchRecovery(unit.scooterId)}
+                className="w-full py-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition"
+              >
+                <Truck className="w-3.5 h-3.5" />
+                <span>Mandar buscar al parqueo más cercano</span>
+              </button>
+              <div className="grid grid-cols-3 gap-1">
+                {(['P1', 'P2', 'P3'] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => onDispatchRecovery(unit.scooterId, st)}
+                    className="py-1 px-1.5 rounded-md bg-slate-800/90 hover:bg-indigo-700 text-indigo-200 border border-indigo-800/70 text-[10px] font-semibold transition"
+                  >
+                    Buscar → {st}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div>
             <span className="text-[10px] font-semibold text-slate-300 flex items-center gap-1 mb-1">
               <BatteryCharging className="w-3.5 h-3.5 text-emerald-400" />

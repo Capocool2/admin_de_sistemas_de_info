@@ -117,7 +117,11 @@ export const AdminFleetPanel: React.FC<AdminFleetPanelProps> = ({
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="font-bold text-white font-mono">{scooter.scooterId}</span>
 
-                    {isOutOfZone ? (
+                    {scooter.recoveryInProgress ? (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-indigo-600 text-white border border-indigo-400 animate-pulse">
+                        EN BÚSQUEDA {scooter.recoveryProgress ?? 0}%
+                      </span>
+                    ) : isOutOfZone ? (
                       <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-rose-600 text-white border border-rose-400 flex items-center gap-1 animate-pulse">
                         <AlertTriangle className="w-2.5 h-2.5" />
                         FUERA DE ZONA
@@ -141,7 +145,13 @@ export const AdminFleetPanel: React.FC<AdminFleetPanelProps> = ({
                       </span>
                     )}
 
-                    {scooter.pendingMaintenance && (
+                    {scooter.recallDeadlineAt && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-600/80 text-white border border-amber-400 font-bold">
+                        FIN 5M GRATIS
+                      </span>
+                    )}
+
+                    {scooter.pendingMaintenance && !scooter.recallDeadlineAt && (
                       <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-900/70 text-amber-200 border border-amber-700">
                         Mant. prog.
                       </span>

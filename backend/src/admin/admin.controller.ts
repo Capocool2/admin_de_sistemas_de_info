@@ -16,10 +16,13 @@ import {
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { AdminPasswordGuard } from '../auth/guards/admin-password.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser, UserPayload } from '../auth/decorators/current-user.decorator';
 import {
+  DispatchRecoveryDto,
   RelocateScooterDto,
+  ScheduleFreeEndDto,
   SendScooterNoticeDto,
   UpdateScooterStatusDto,
   UpdateUserStatusDto,
@@ -27,7 +30,7 @@ import {
 } from './dto/admin.dto';
 
 @Controller('api/admin')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, AdminPasswordGuard)
 @Roles('admin')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class AdminController {
@@ -67,6 +70,25 @@ export class AdminController {
     @Body() dto: RelocateScooterDto,
   ) {
     return this.adminService.relocateScooter(scooterId, dto);
+  }
+
+  @Post('scooters/:id/dispatch-recovery')
+  @HttpCode(HttpStatus.OK)
+  async dispatchRecovery(
+    @Param('id') scooterId: string,
+    @Body() dto: DispatchRecoveryDto,
+  ) {
+    return this.adminService.dispatchRecovery(scooterId, dto);
+  }
+
+  @Post('scooters/:id/schedule-free-end')
+  @HttpCode(HttpStatus.OK)
+  async scheduleFreeEnd(
+    @Param('id') scooterId: string,
+    @Body() dto: ScheduleFreeEndDto,
+    @CurrentUser() user: UserPayload,
+  ) {
+    return this.adminService.scheduleFreeEnd(scooterId, dto, user?.nombre_completo);
   }
 
   @Post('scooters/:id/clear-lock')

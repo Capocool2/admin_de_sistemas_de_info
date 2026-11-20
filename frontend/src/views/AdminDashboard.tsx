@@ -15,6 +15,7 @@ import { getSocket, joinRoom } from '../services/socket';
 import {
   attendAdminAlert,
   clearAdminScooterLock,
+  dispatchAdminScooterRecovery,
   forceCancelTrip,
   getAdminAlerts,
   getAdminFleet,
@@ -24,6 +25,7 @@ import {
   getAllTrips,
   relocateAdminScooter,
   resetDevTrips,
+  scheduleAdminFreeEnd,
   sendAdminScooterNotice,
   updateAdminScooterStatus,
   updateAdminUserStatus,
@@ -46,6 +48,7 @@ import { AdminScooterDrawer } from '../components/admin/AdminScooterDrawer';
 import { AdminAlertsPanel } from '../components/admin/AdminAlertsPanel';
 import { AdminTripsTab } from '../components/admin/AdminTripsTab';
 import { AdminUsersZonesTab } from '../components/admin/AdminUsersZonesTab';
+import { AdminConfirmRequest, AdminPasswordModal } from '../components/admin/AdminPasswordModal';
 
 interface AdminDashboardProps {
   currentUser?: AuthUser | null;
@@ -71,12 +74,15 @@ function buildAlertMessage(tipo: string, scooterId: string): string {
 
 function buildScooterMarkerHtml(unit: AdminFleetUnit): string {
   const shortCode = unit.scooterId.replace('SCOOTER-', 'S');
+  const isRecovering = Boolean(unit.recoveryInProgress);
   const isOut = Boolean(unit.outOfPerimeter);
   const isBlocked = unit.estado === 'bloqueado';
   const isMaint = unit.estado === 'mantenimiento';
   const isInUse = unit.estado === 'en uso';
 
-  const circleColor = isOut || isBlocked
+  const circleColor = isRecovering
+    ? 'bg-indigo-600 shadow-indigo-500/70'
+    : isOut || isBlocked
     ? 'bg-rose-600 shadow-rose-500/70'
     : isMaint
     ? 'bg-amber-500 shadow-amber-500/60'
@@ -84,13 +90,17 @@ function buildScooterMarkerHtml(unit: AdminFleetUnit): string {
     ? 'bg-cyan-500 shadow-cyan-400/60'
     : 'bg-emerald-500 shadow-emerald-400/50';
 
-  const pulseRing = isOut
+  const pulseRing = isRecovering
+    ? '<span class="absolute w-11 h-11 rounded-full bg-indigo-500/45 animate-ping"></span>'
+    : isOut
     ? '<span class="absolute w-11 h-11 rounded-full bg-rose-600/45 animate-ping"></span>'
     : isInUse
     ? '<span class="absolute w-10 h-10 rounded-full bg-cyan-400/35 animate-ping"></span>'
     : '';
 
-  const tag = isOut
+  const tag = isRecovering
+    ? `<span class="mt-0.5 px-1.5 py-0.2 rounded bg-indigo-700 text-white text-[8px] font-extrabold tracking-wide border border-indigo-200 shadow-lg whitespace-nowrap">EN BÚSQUEDA ${unit.recoveryProgress ?? 0}%</span>`
+    : isOut
     ? '<span class="mt-0.5 px-1.5 py-0.2 rounded bg-rose-700 text-white text-[8px] font-extrabold tracking-wide border border-rose-200 shadow-lg whitespace-nowrap">FUERA DE ZONA</span>'
     : isBlocked
     ? '<span class="mt-0.5 px-1 py-0.2 rounded bg-rose-900 text-rose-100 text-[8px] font-bold border border-rose-400 shadow whitespace-nowrap">BLOQUEADO</span>'
@@ -112,7 +122,9 @@ function buildScooterMarkerHtml(unit: AdminFleetUnit): string {
 }
 
 function buildScooterPopupHtml(unit: AdminFleetUnit): string {
-  const statusLabel = unit.outOfPerimeter
+  const statusLabel = unit.recoveryInProgress
+    ? `<span class="text-indigo-400 font-bold">En búsqueda hacia parqueo (${unit.recoveryProgress ?? 0}%)</span>`
+    : unit.outOfPerimeter
     ? '<span class="text-rose-400 font-bold">FUERA DE ZONA (Bloqueado)</span>'
     : unit.estado === 'bloqueado'
     ? '<span class="text-rose-400 font-bold">Bloqueado</span>'
@@ -157,6 +169,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   const [isBusy, setIsBusy] = useState(false);
   const [showDevMenu, setShowDevMenu] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<AdminConfirmRequest | null>(null);
 
   fleetRef.current = fleet;
   followScooterIdRef.current = followScooterId;
@@ -234,6 +247,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
           activeRiderName: row.active_rider_name || null,
           pendingAlertsCount: Number(row.pending_alerts_count) || 0,
           pendingMaintenance: Boolean(row.pending_maintenance),
+          recoveryInProgress: Boolean(row.recovery_in_progress),
+          recoveryStationName: row.recovery_station_name || null,
+          recoveryProgress: Number(row.recovery_progress) || 0,
+          recallDeadlineAt: row.recall_deadline_at || null,
+          recallReason: row.recall_reason || null,
           timestamp: row.updated_at || new Date().toISOString(),
         };
 
@@ -448,6 +466,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
           typeof data.pendingMaintenance === 'boolean'
             ? data.pendingMaintenance
             : prevUnit?.pendingMaintenance,
+        recoveryInProgress:
+          typeof data.recoveryInProgress === 'boolean'
+            ? data.recoveryInProgress
+            : prevUnit?.recoveryInProgress,
+        recoveryStationName:
+          data.recoveryStationName !== undefined
+            ? data.recoveryStationName
+            : prevUnit?.recoveryStationName,
+        recoveryProgress:
+          typeof data.recoveryProgress === 'number'
+            ? data.recoveryProgress
+            : prevUnit?.recoveryProgress,
+        recallDeadlineAt:
+          data.recallDeadlineAt !== undefined
+            ? data.recallDeadlineAt
+            : prevUnit?.recallDeadlineAt,
+        recallReason:
+          data.recallReason !== undefined
+            ? data.recallReason
+            : prevUnit?.recallReason,
         activeTripId:
           nextEstado === 'disponible' || nextEstado === 'mantenimiento'
             ? null
@@ -528,6 +566,61 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
 
     const handleAlertsUpdated = () => loadAlertsFromServer();
     const handleZonesUpdated = () => loadSecondaryData();
+    const handleRecoveryStatus = (data: {
+      scooterId: string;
+      status: 'en_camino' | 'completado';
+      stationName: string;
+      progress: number;
+      lat: number;
+      lng: number;
+      message?: string;
+    }) => {
+      setFleet((prev) => {
+        const cur = prev[data.scooterId];
+        if (!cur) return prev;
+        const next: AdminFleetUnit = {
+          ...cur,
+          lat: data.lat ?? cur.lat,
+          lng: data.lng ?? cur.lng,
+          recoveryInProgress: data.status === 'en_camino',
+          recoveryStationName: data.status === 'en_camino' ? data.stationName : null,
+          recoveryProgress: data.progress,
+        };
+        syncMarkerOnMap(next);
+        return { ...prev, [data.scooterId]: next };
+      });
+      if (data.status === 'completado') {
+        showToast('success', data.message || `${data.scooterId} estacionado en parqueo.`);
+        loadFleetFromServer();
+        loadAlertsFromServer();
+      }
+    };
+
+    const handleRecallScheduled = (data: {
+      scooterId: string;
+      deadlineAt: string;
+      reason: string;
+    }) => {
+      setFleet((prev) => {
+        const cur = prev[data.scooterId];
+        if (!cur) return prev;
+        return {
+          ...prev,
+          [data.scooterId]: {
+            ...cur,
+            pendingMaintenance: true,
+            recallDeadlineAt: data.deadlineAt,
+            recallReason: data.reason,
+          },
+        };
+      });
+    };
+
+    const handleRecallCompleted = (data: { scooterId: string; message?: string }) => {
+      showToast('success', data.message || `Viaje en ${data.scooterId} finalizado gratis y pasado a mantenimiento.`);
+      loadFleetFromServer();
+      loadSecondaryData();
+    };
 
     socket.on('telemetry:broadcast', handleTelemetry);
     socket.on('alert:security', handleSecurityAlert);
@@ -536,6 +629,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
     socket.on('scooter:reset', handleResetEvent);
     socket.on('alerts:updated', handleAlertsUpdated);
     socket.on('zones:updated', handleZonesUpdated);
+    socket.on('scooter:recovery_status', handleRecoveryStatus);
+    socket.on('trip:recall_scheduled', handleRecallScheduled);
+    socket.on('trip:recall_completed', handleRecallCompleted);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -546,6 +642,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       socket.off('scooter:reset', handleResetEvent);
       socket.off('alerts:updated', handleAlertsUpdated);
       socket.off('zones:updated', handleZonesUpdated);
+      socket.off('scooter:recovery_status', handleRecoveryStatus);
+      socket.off('trip:recall_scheduled', handleRecallScheduled);
+      socket.off('trip:recall_completed', handleRecallCompleted);
     };
   }, [loadAlertsFromServer, loadFleetFromServer, loadSecondaryData, syncMarkerOnMap]);
 
@@ -581,6 +680,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
     }
   };
 
+  const requestAdminAction = (opts: {
+    title: string;
+    description: string;
+    danger?: boolean;
+    confirmLabel?: string;
+    run: (adminPassword: string) => Promise<void>;
+  }) => {
+    setPendingConfirm({
+      title: opts.title,
+      description: opts.description,
+      danger: opts.danger,
+      confirmLabel: opts.confirmLabel,
+      onConfirm: async (adminPassword: string) => {
+        setIsBusy(true);
+        try {
+          await opts.run(adminPassword);
+        } finally {
+          setIsBusy(false);
+        }
+      },
+    });
+  };
+
   const handleAttendAlert = async (al: SecurityAlert) => {
     if (!al.dbId) {
       setAlerts((prev) =>
@@ -590,29 +712,59 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       return;
     }
 
-    setIsBusy(true);
-    try {
-      const res = await attendAdminAlert(al.dbId);
-      showToast('success', res.message || 'Alerta marcada como atendida');
-      await loadAlertsFromServer();
-    } catch (err: any) {
-      showToast('error', err.message || 'No fue posible atender la alerta');
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title: `Atender alerta de ${al.scooterId}`,
+      description: `Se marcará la alerta "${al.type.replace('_', ' ')}" como atendida en PostgreSQL.`,
+      confirmLabel: 'Marcar atendida',
+      run: async (adminPassword) => {
+        const res = await attendAdminAlert(al.dbId!, adminPassword);
+        showToast('success', res.message || 'Alerta marcada como atendida');
+        await loadAlertsFromServer();
+      },
+    });
   };
 
   const handleRelocateScooter = async (scooterId: string, stationId: 'P1' | 'P2' | 'P3') => {
-    setIsBusy(true);
-    try {
-      const res = await relocateAdminScooter(scooterId, stationId, true);
-      showToast('success', res.message);
-      await Promise.all([loadFleetFromServer(), loadAlertsFromServer()]);
-    } catch (err: any) {
-      showToast('error', err.message);
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title: `Recolocar ${scooterId} en ${stationId}`,
+      description: `Moverá ${scooterId} a la estación ${stationId}, recargará su batería al 100% y atenderá sus alertas abiertas.`,
+      confirmLabel: 'Recolocar unidad',
+      run: async (adminPassword) => {
+        const res = await relocateAdminScooter(scooterId, stationId, adminPassword, true);
+        showToast('success', res.message);
+        await Promise.all([loadFleetFromServer(), loadAlertsFromServer()]);
+      },
+    });
+  };
+
+  const handleDispatchRecovery = async (scooterId: string, stationId?: 'P1' | 'P2' | 'P3') => {
+    requestAdminAction({
+      title: `Mandar buscar ${scooterId}`,
+      description: stationId
+        ? `Despachará equipo logístico para recuperar ${scooterId} y trasladarlo a la estación ${stationId}.`
+        : `Despachará equipo logístico para recuperar ${scooterId} y traerlo a la estación de parqueo más cercana.`,
+      confirmLabel: 'Despachar búsqueda',
+      run: async (adminPassword) => {
+        const res = await dispatchAdminScooterRecovery(scooterId, adminPassword, stationId, true);
+        showToast('success', res.message);
+        await loadFleetFromServer();
+      },
+    });
+  };
+
+  const handleScheduleFreeEnd = async (scooterId: string, reason?: string) => {
+    requestAdminAction({
+      title: `Finalizar viaje de ${scooterId} en 5 minutos (Sin cobro)`,
+      description:
+        'Notificará de inmediato al turista con cuenta regresiva de 5 minutos, exonerará completamente el costo del viaje ($0 COP) y enviará la unidad a mantenimiento al finalizar.',
+      danger: true,
+      confirmLabel: 'Avisar y programar cierre',
+      run: async (adminPassword) => {
+        const res = await scheduleAdminFreeEnd(scooterId, adminPassword, reason, 5);
+        showToast('success', res.message);
+        await loadFleetFromServer();
+      },
+    });
   };
 
   const handleChangeScooterStatus = async (
@@ -620,80 +772,86 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
     estado: 'disponible' | 'mantenimiento',
     deferIfInUse = false,
   ) => {
-    setIsBusy(true);
-    try {
-      const res = await updateAdminScooterStatus(scooterId, estado, deferIfInUse);
-      showToast('success', res.message);
-      await loadFleetFromServer();
-    } catch (err: any) {
-      showToast('error', err.message);
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title:
+        estado === 'mantenimiento'
+          ? deferIfInUse
+            ? `Programar mantenimiento para ${scooterId}`
+            : `Enviar ${scooterId} a mantenimiento`
+          : `Reactivar ${scooterId} como disponible`,
+      description:
+        estado === 'mantenimiento'
+          ? deferIfInUse
+            ? `Cuando el turista finalice su viaje actual, ${scooterId} pasará automáticamente a estado mantenimiento.`
+            : `Inhabilitará ${scooterId} para alquileres turísticos hasta nueva revisión.`
+          : `Habilitará ${scooterId} nuevamente para que los turistas puedan desbloquearlo.`,
+      danger: estado === 'mantenimiento' && !deferIfInUse,
+      run: async (adminPassword) => {
+        const res = await updateAdminScooterStatus(
+          scooterId,
+          estado,
+          adminPassword,
+          deferIfInUse,
+        );
+        showToast('success', res.message);
+        await loadFleetFromServer();
+      },
+    });
   };
 
   const handleClearLock = async (scooterId: string) => {
-    setIsBusy(true);
-    try {
-      const res = await clearAdminScooterLock(scooterId);
-      showToast('success', res.message);
-      await Promise.all([loadFleetFromServer(), loadAlertsFromServer()]);
-    } catch (err: any) {
-      showToast('error', err.message);
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title: `Liberar bloqueo y alarma de ${scooterId}`,
+      description: `Retirará el bloqueo electrónico de ${scooterId} y marcará sus alertas de seguridad pendientes como atendidas.`,
+      confirmLabel: 'Liberar bloqueo',
+      run: async (adminPassword) => {
+        const res = await clearAdminScooterLock(scooterId, adminPassword);
+        showToast('success', res.message);
+        await Promise.all([loadFleetFromServer(), loadAlertsFromServer()]);
+      },
+    });
   };
 
   const handleSendNotice = async (scooterId: string, message: string) => {
-    setIsBusy(true);
-    try {
-      const res = await sendAdminScooterNotice(scooterId, message);
-      showToast('success', res.message);
-    } catch (err: any) {
-      showToast('error', err.message);
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title: `Enviar aviso al turista en ${scooterId}`,
+      description: `Mensaje a mostrar en pantalla: "${message}"`,
+      confirmLabel: 'Enviar aviso',
+      run: async (adminPassword) => {
+        const res = await sendAdminScooterNotice(scooterId, message, adminPassword);
+        showToast('success', res.message);
+      },
+    });
   };
 
   const handleForceCancelBlockedTrip = async (viajeId: string, scooterId: string) => {
-    if (
-      !window.confirm(
-        `¿Cerrar el viaje bloqueado de ${scooterId} sin aplicar multa manual adicional? Después podrás recolocar la unidad en una estación.`,
-      )
-    ) {
-      return;
-    }
-    setIsBusy(true);
-    try {
-      const res = await forceCancelTrip(viajeId);
-      showToast('success', res.message || `Viaje en ${scooterId} cerrado`);
-      await loadFleetFromServer();
-    } catch (err: any) {
-      showToast('error', err.message || 'No fue posible cerrar el viaje bloqueado');
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title: `Cerrar viaje bloqueado de ${scooterId}`,
+      description: `Forzará el cierre administrativo del viaje en ${scooterId} sin aplicar multa manual adicional.`,
+      danger: true,
+      confirmLabel: 'Cerrar viaje bloqueado',
+      run: async (adminPassword) => {
+        const res = await forceCancelTrip(viajeId, adminPassword);
+        showToast('success', res.message || `Viaje en ${scooterId} cerrado`);
+        await loadFleetFromServer();
+      },
+    });
   };
 
   const handleToggleUserStatus = async (user: AdminUserRecord) => {
     const nextStatus = user.estado === 'activo' ? 'bloqueado' : 'activo';
     const actionLabel = nextStatus === 'bloqueado' ? 'suspender' : 'habilitar';
-    if (!window.confirm(`¿Deseas ${actionLabel} la cuenta de ${user.nombre_completo}?`)) {
-      return;
-    }
-
-    setIsBusy(true);
-    try {
-      const res = await updateAdminUserStatus(user.id, nextStatus);
-      showToast('success', res.message);
-      await loadSecondaryData();
-    } catch (err: any) {
-      showToast('error', err.message);
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title: `${nextStatus === 'bloqueado' ? 'Suspender' : 'Habilitar'} cuenta de usuario`,
+      description: `Se va a ${actionLabel} la cuenta de ${user.nombre_completo} (${user.correo}).`,
+      danger: nextStatus === 'bloqueado',
+      confirmLabel: nextStatus === 'bloqueado' ? 'Suspender cuenta' : 'Habilitar cuenta',
+      run: async (adminPassword) => {
+        const res = await updateAdminUserStatus(user.id, nextStatus, adminPassword);
+        showToast('success', res.message);
+        await loadSecondaryData();
+      },
+    });
   };
 
   const handleSaveZone = async (
@@ -704,38 +862,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       applyRateToAllZones?: boolean;
     },
   ) => {
-    setIsBusy(true);
-    try {
-      const res = await updateAdminZone(zoneId, payload);
-      showToast('success', res.message);
-      await loadSecondaryData();
-    } catch (err: any) {
-      showToast('error', err.message);
-    } finally {
-      setIsBusy(false);
-    }
+    requestAdminAction({
+      title: 'Actualizar reglas de geocerca y tarifas',
+      description: `Nuevo límite: ${payload.limite_velocidad ?? '-'} km/h • Nueva tarifa: $${(payload.tarifa_minuto ?? 0).toLocaleString('es-CO')} COP/min.`,
+      confirmLabel: 'Guardar reglas PostGIS',
+      run: async (adminPassword) => {
+        const res = await updateAdminZone(zoneId, payload, adminPassword);
+        showToast('success', res.message);
+        await loadSecondaryData();
+      },
+    });
   };
 
   const handleReset = async () => {
     setShowDevMenu(false);
-    if (
-      window.confirm(
-        'HERRAMIENTA DEV: ¿Deseas reiniciar todos los viajes, pagos y alertas para pruebas y devolver la flota a disponible?',
-      )
-    ) {
-      setIsBusy(true);
-      try {
-        await resetDevTrips();
+    requestAdminAction({
+      title: 'Resetear flota y base de datos (Pruebas)',
+      description:
+        'ADVERTENCIA: Truncará todos los viajes, pagos y alertas y restablecerá todos los monopatines a disponible en sus estaciones.',
+      danger: true,
+      confirmLabel: 'Ejecutar reseteo total',
+      run: async (adminPassword) => {
+        await resetDevTrips(adminPassword);
         setSelectedScooterId(null);
         setFollowScooterId(null);
         await Promise.all([loadFleetFromServer(), loadAlertsFromServer(), loadSecondaryData()]);
         showToast('success', 'Ambiente de pruebas reseteado correctamente.');
-      } catch (err: any) {
-        showToast('error', err.message || 'Error al resetear flota');
-      } finally {
-        setIsBusy(false);
-      }
-    }
+      },
+    });
   };
 
   const fleetList = Object.values(fleet);
@@ -920,7 +1074,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
             </div>
           </div>
 
-          <div ref={mapContainerRef} className="flex-1 w-full" />
+          <div ref={mapContainerRef} className="flex-1 w-full relative z-0 isolate" />
         </div>
 
         {/* Lado Derecho: Estado de Flota, Acciones sobre Unidad Seleccionada y Alertas */}
@@ -958,6 +1112,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
               onClose={() => setSelectedScooterId(null)}
               onToggleFollow={handleToggleFollow}
               onRelocate={handleRelocateScooter}
+              onDispatchRecovery={handleDispatchRecovery}
+              onScheduleFreeEnd={handleScheduleFreeEnd}
               onChangeStatus={handleChangeScooterStatus}
               onClearLock={handleClearLock}
               onSendNotice={handleSendNotice}
@@ -993,6 +1149,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
           onSaveZone={handleSaveZone}
         />
       )}
+
+      <AdminPasswordModal
+        request={pendingConfirm}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 };

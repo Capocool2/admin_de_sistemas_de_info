@@ -53,25 +53,36 @@ export const ScannerModal: React.FC<ScannerModalProps> = ({
   const scannerInstanceRef = useRef<Html5Qrcode | null>(null);
   const hasManualSelectionRef = useRef(false);
 
+  const safeStopScanner = (scanner: Html5Qrcode | null) => {
+    if (!scanner) return;
+    if (scannerInstanceRef.current === scanner) {
+      scannerInstanceRef.current = null;
+    }
+    try {
+      if (scanner.isScanning) {
+        Promise.resolve(scanner.stop())
+          .then(() => {
+            try {
+              scanner.clear();
+            } catch {}
+          })
+          .catch(() => {
+            try {
+              scanner.clear();
+            } catch {}
+          });
+      } else {
+        scanner.clear();
+      }
+    } catch {
+      // Evitar que una transición concurrente de Html5Qrcode rompa el árbol de React
+    }
+  };
+
   // Inicialización y liberación limpia de la cámara real con Html5Qrcode
   useEffect(() => {
     if (!isOpen) {
-      if (scannerInstanceRef.current) {
-        if (scannerInstanceRef.current.isScanning) {
-          scannerInstanceRef.current
-            .stop()
-            .then(() => {
-              scannerInstanceRef.current?.clear();
-              scannerInstanceRef.current = null;
-            })
-            .catch(() => {});
-        } else {
-          try {
-            scannerInstanceRef.current.clear();
-          } catch {}
-          scannerInstanceRef.current = null;
-        }
-      }
+      safeStopScanner(scannerInstanceRef.current);
       setCameraState('starting');
       setScannedFeedback(null);
       return;
@@ -86,8 +97,9 @@ export const ScannerModal: React.FC<ScannerModalProps> = ({
       const container = document.getElementById('qr-scanner-viewport');
       if (!container || !isMounted) return;
 
+      let scanner: Html5Qrcode | null = null;
       try {
-        const scanner = new Html5Qrcode('qr-scanner-viewport');
+        scanner = new Html5Qrcode('qr-scanner-viewport');
         scannerInstanceRef.current = scanner;
 
         await scanner.start(
@@ -105,31 +117,29 @@ export const ScannerModal: React.FC<ScannerModalProps> = ({
               parsed = segments[segments.length - 1];
             }
 
-            handleSelectUnit(parsed);
+            hasManualSelectionRef.current = true;
+            setScooterId(parsed);
+            onClearError?.();
             setScannedFeedback(`¡Monopatín detectado: ${parsed}!`);
             setCameraState('scanned');
 
             // Liberar stream de cámara inmediatamente tras escanear
-            if (scanner.isScanning) {
-              scanner
-                .stop()
-                .then(() => {
-                  scanner.clear();
-                  scannerInstanceRef.current = null;
-                })
-                .catch(() => {});
-            }
+            safeStopScanner(scanner);
           },
           () => {
             // Frame sin código QR detectado (no-op)
           },
         );
 
-        if (isMounted) {
-          setCameraState('active');
+        if (!isMounted) {
+          safeStopScanner(scanner);
+          return;
         }
+
+        setCameraState('active');
       } catch (err: any) {
         console.warn('Cámara no iniciada:', err);
+        safeStopScanner(scanner);
         if (isMounted) {
           setCameraState('error');
           setCameraError(
@@ -144,24 +154,9 @@ export const ScannerModal: React.FC<ScannerModalProps> = ({
     return () => {
       isMounted = false;
       clearTimeout(timer);
-      if (scannerInstanceRef.current) {
-        if (scannerInstanceRef.current.isScanning) {
-          scannerInstanceRef.current
-            .stop()
-            .then(() => {
-              scannerInstanceRef.current?.clear();
-              scannerInstanceRef.current = null;
-            })
-            .catch(() => {});
-        } else {
-          try {
-            scannerInstanceRef.current.clear();
-          } catch {}
-          scannerInstanceRef.current = null;
-        }
-      }
+      safeStopScanner(scannerInstanceRef.current);
     };
-  }, [isOpen]);
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fleetIds =
     Object.keys(fleetStatuses).length > 0

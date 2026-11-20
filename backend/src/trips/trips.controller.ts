@@ -20,6 +20,7 @@ import { StartTripDto } from './dto/start-trip.dto';
 import { EndTripDto } from './dto/end-trip.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { AdminPasswordGuard } from '../auth/guards/admin-password.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('api/trips')
@@ -90,7 +91,7 @@ export class TripsController {
    * POST /api/trips/force-cancel/:viajeId
    */
   @Post('force-cancel/:viajeId')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, AdminPasswordGuard)
   @Roles('admin')
   @HttpCode(HttpStatus.OK)
   async forceCancel(@Param('viajeId') viajeId: string) {
@@ -102,7 +103,7 @@ export class TripsController {
    * POST /api/trips/reset-dev
    */
   @Post('reset-dev')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, AdminPasswordGuard)
   @Roles('admin')
   @HttpCode(HttpStatus.OK)
   async resetDev() {

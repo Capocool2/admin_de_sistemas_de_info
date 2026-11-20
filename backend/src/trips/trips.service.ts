@@ -217,6 +217,8 @@ export class TripsService {
 
     const scooterId = viaje.monopatin_id;
 
+    const isFreeRecall = this.telemetryGateway.isTripFreeRecall(viaje.id);
+
     // 2. Validación Espacial PostGIS: ¿El monopatín está en una Estación de Parqueo Autorizado? (RN-06, Control 4)
     const parkingMatch: Array<{ id: string; nombre: string; tarifa_minuto: number }> =
       await this.dataSource.query(
@@ -229,7 +231,7 @@ export class TripsService {
         [scooterId],
       );
 
-    if (parkingMatch.length === 0 && !dto.forzarAbandono) {
+    if (parkingMatch.length === 0 && !dto.forzarAbandono && !isFreeRecall) {
       throw new BadRequestException({
         statusCode: 400,
         error: 'Bad Request',
@@ -239,14 +241,22 @@ export class TripsService {
       });
     }
 
-    const esAbandonoFueraDeZona = parkingMatch.length === 0 && !!dto.forzarAbandono;
-    const estacionParqueo = esAbandonoFueraDeZona
-      ? {
-          id: 'abandono-fuera-zona',
-          nombre: 'Fuera de Estación (Multa por Abandono)',
-          tarifa_minuto: this.DEFAULT_RATE_PER_MINUTE,
-        }
-      : parkingMatch[0];
+    const esAbandonoFueraDeZona =
+      !isFreeRecall && parkingMatch.length === 0 && !!dto.forzarAbandono;
+    const estacionParqueo =
+      parkingMatch.length > 0
+        ? parkingMatch[0]
+        : isFreeRecall
+        ? {
+            id: 'recall-seguridad',
+            nombre: 'Entrega por Revisión Técnica (Exonerado)',
+            tarifa_minuto: 0,
+          }
+        : {
+            id: 'abandono-fuera-zona',
+            nombre: 'Fuera de Estación (Multa por Abandono)',
+            tarifa_minuto: this.DEFAULT_RATE_PER_MINUTE,
+          };
 
     // 3. Emitir comando de bloqueo al candado IoT vía WebSockets (y alerta si fue abandonado)
     if (esAbandonoFueraDeZona) {
@@ -271,15 +281,20 @@ export class TripsService {
     const finViaje = new Date();
     const duracionMs = finViaje.getTime() - new Date(viaje.inicio_viaje).getTime();
     const duracionMinutos = Math.max(1, Math.ceil(duracionMs / (1000 * 60)));
-    const tarifaAplicada =
-      this.lockedTripRates.get(viaje.id) ??
-      Number(estacionParqueo.tarifa_minuto) ??
-      this.DEFAULT_RATE_PER_MINUTE;
+    const tarifaAplicada = isFreeRecall
+      ? 0
+      : this.lockedTripRates.get(viaje.id) ??
+        Number(estacionParqueo.tarifa_minuto) ??
+        this.DEFAULT_RATE_PER_MINUTE;
     const multaCOP = esAbandonoFueraDeZona ? this.ABANDONMENT_PENALTY_COP : 0;
-    const costoTotal = duracionMinutos * tarifaAplicada + multaCOP;
+    const costoTotal = isFreeRecall ? 0 : duracionMinutos * tarifaAplicada + multaCOP;
 
     // 5. INSERT REAL en pagos en PostgreSQL Neon
-    const refPrefix = esAbandonoFueraDeZona ? 'PAY-PENALTY' : 'PAY-SAME';
+    const refPrefix = isFreeRecall
+      ? 'PAY-EXONERADO'
+      : esAbandonoFueraDeZona
+      ? 'PAY-PENALTY'
+      : 'PAY-SAME';
     const refTransaccion = `${refPrefix}-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}`;
     const insertPagoRows = await this.dataSource.query(
       `INSERT INTO pagos (viaje_id, monto, estado, referencia_transaccion, created_at)
@@ -303,8 +318,8 @@ export class TripsService {
     );
     const viajeActualizado = this.extractFirstRow<any>(updateViajeRows);
 
-    // 7. UPDATE REAL en monopatines ('bloqueado' si quedó abandonado, 'mantenimiento' si programado o batería < 20, o 'disponible')
-    const pendingMaint = this.telemetryGateway.isPendingMaintenance(scooterId);
+    // 7. UPDATE REAL en monopatines ('bloqueado' si quedó abandonado, 'mantenimiento' si recall/programado/batería < 20, o 'disponible')
+    const pendingMaint = isFreeRecall || this.telemetryGateway.isPendingMaintenance(scooterId);
     const updatedScooterRows = await this.dataSource.query(
       `UPDATE monopatines 
        SET estado = CASE 
@@ -322,13 +337,16 @@ export class TripsService {
       updatedScooterRows,
     );
 
+    this.telemetryGateway.clearScheduledFreeRecall(scooterId);
     this.telemetryGateway.markPendingMaintenance(scooterId, false);
     this.lockedTripRates.delete(viaje.id);
     await this.telemetryGateway.broadcastScooterSnapshot(scooterId);
 
     return {
       statusCode: 200,
-      message: esAbandonoFueraDeZona
+      message: isFreeRecall
+        ? 'Viaje finalizado sin cobro ($0 COP) por revisión técnica preventiva. Monopatín enviado a mantenimiento.'
+        : esAbandonoFueraDeZona
         ? 'Monopatín bloqueado por abandono fuera de estación. Se aplicó multa de recogida y se notificó al Centro de Control.'
         : 'Viaje finalizado exitosamente. Monopatín bloqueado y pago procesado.',
       data: {
@@ -341,6 +359,7 @@ export class TripsService {
         tarifaMinutoCOP: tarifaAplicada,
         multaCOP,
         penalizado: esAbandonoFueraDeZona,
+        exonerado: isFreeRecall,
         costoTotalCOP: costoTotal,
         pago: {
           id: pagoGuardado.id,
@@ -382,9 +401,12 @@ export class TripsService {
 
     const tarifaMinutoCOP =
       this.lockedTripRates.get(viaje.id) ?? (await this.getCurrentBaseRatePerMinute());
+    const recall = this.telemetryGateway.getRecallInfoByTripId(viaje.id);
     return {
       ...viaje,
       tarifaMinutoCOP,
+      recallDeadlineAt: recall?.deadlineAt ?? null,
+      recallReason: recall?.reason ?? null,
     };
   }
 

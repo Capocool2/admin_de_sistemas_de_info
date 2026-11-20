@@ -29,6 +29,8 @@ html, body, #root {
 .leaflet-container {
   font-family: inherit;
   background-color: #0f172a !important;
+  isolation: isolate;
+  z-index: 0;
 }
 
 /* OpenStreetMap Dark Filter (100% Free, Sin API Key, Sin Marcas de Agua) */

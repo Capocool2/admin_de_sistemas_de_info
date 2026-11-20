@@ -54,6 +54,7 @@ export const ActiveTripPanel: React.FC<ActiveTripPanelProps> = ({
   onMinimizedChange,
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [recallRemainingSeconds, setRecallRemainingSeconds] = useState<number | null>(null);
   const [internalMinimized, setInternalMinimized] = useState(false);
   const [dragOffsetY, setDragOffsetY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -95,14 +96,30 @@ export const ActiveTripPanel: React.FC<ActiveTripPanelProps> = ({
     return () => clearInterval(interval);
   }, [trip.inicioViaje]);
 
+  useEffect(() => {
+    const deadlineIso = trip.recallDeadlineAt || telemetry?.recallDeadlineAt;
+    if (!deadlineIso) {
+      setRecallRemainingSeconds(null);
+      return;
+    }
+    const deadlineMs = new Date(deadlineIso).getTime();
+    const updateCountdown = () => {
+      setRecallRemainingSeconds(Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000)));
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [trip.recallDeadlineAt, telemetry?.recallDeadlineAt]);
+
   const formatTimer = (totalSec: number) => {
     const mins = Math.floor(totalSec / 60);
     const secs = totalSec % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const isFreeRecall = recallRemainingSeconds !== null;
   const minutesCharged = Math.max(1, Math.ceil(elapsedSeconds / 60));
-  const estimatedCost = minutesCharged * (trip.tarifaMinutoCOP || 500);
+  const estimatedCost = isFreeRecall ? 0 : minutesCharged * (trip.tarifaMinutoCOP || 500);
 
   const speed = telemetry ? telemetry.speed : 0;
   const battery = telemetry ? telemetry.battery : 85;
@@ -237,8 +254,13 @@ export const ActiveTripPanel: React.FC<ActiveTripPanelProps> = ({
                 </span>
                 <span className="text-slate-600 hidden sm:inline">•</span>
                 <span className="text-slate-300 hidden sm:inline">
-                  ${estimatedCost.toLocaleString()}
+                  {isFreeRecall ? '$0 (Gratis)' : `$${estimatedCost.toLocaleString()}`}
                 </span>
+                {isFreeRecall && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-bold text-[10px] shrink-0">
+                    Fin {formatTimer(recallRemainingSeconds)}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -308,6 +330,26 @@ export const ActiveTripPanel: React.FC<ActiveTripPanelProps> = ({
       {!minimized && (
         <>
 
+      {/* Aviso de Finalización Programada por Revisión Técnica (5 min sin cobro) */}
+      {isFreeRecall && (
+        <div className="mb-2.5 p-2.5 rounded-xl bg-amber-950/90 border border-amber-500/80 text-amber-100 text-xs flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-amber-300">
+                🛠️ REVISIÓN TÉCNICA • VIAJE FINALIZARÁ SIN COBRO ($0 COP)
+              </p>
+              <p className="text-[11px] text-amber-100/90 mt-0.5 leading-tight">
+                Por seguridad debemos revisar esta unidad ({trip.recallReason || telemetry?.recallReason || 'control técnico'}). Se cerrará automáticamente sin costo al llegar a 00:00.
+              </p>
+            </div>
+          </div>
+          <span className="px-2 py-1 rounded-lg bg-amber-500 text-slate-950 font-mono text-xs font-extrabold shrink-0">
+            {formatTimer(recallRemainingSeconds)}
+          </span>
+        </div>
+      )}
+
       {/* Alarma de Perímetro / Parada de Emergencia */}
       {isEmergencyLocked && (
         <div className="mb-2.5 p-2.5 rounded-xl bg-rose-950/90 border border-rose-600/80 text-rose-200 text-xs flex items-start justify-between gap-2 animate-pulse">
@@ -363,7 +405,13 @@ export const ActiveTripPanel: React.FC<ActiveTripPanelProps> = ({
           <div className="text-lg font-mono font-bold text-white tracking-wider">
             {formatTimer(elapsedSeconds)}
           </div>
-          <div className="text-[10px] text-slate-400">${estimatedCost.toLocaleString()} COP</div>
+          <div className="text-[10px] text-slate-400">
+            {isFreeRecall ? (
+              <span className="text-amber-300 font-semibold">$0 COP (Exonerado)</span>
+            ) : (
+              `$${estimatedCost.toLocaleString()} COP`
+            )}
+          </div>
         </div>
 
         {/* Velocímetro en vivo */}

@@ -12,6 +12,11 @@ interface ReceiptModalProps {
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receipt, onClose }) => {
   if (!receipt) return null;
 
+  const isExonerado =
+    Boolean(receipt.exonerado) ||
+    (receipt.costoTotalCOP === 0 &&
+      Boolean(receipt.pago?.referencia?.startsWith('PAY-EXONERADO-')));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
       <div className="w-full max-w-sm overflow-hidden bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl">
@@ -38,9 +43,17 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ receipt, onClose }) 
               <span className="text-sm font-normal text-slate-400">COP</span>
             </div>
             <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium">
-              Transacción Aprobada (Sandbox)
+              {isExonerado
+                ? 'Viaje Exonerado ($0 COP) — Revisión Técnica'
+                : 'Transacción Aprobada (Sandbox)'}
             </span>
           </div>
+
+          {isExonerado && receipt.motivoExoneracion && (
+            <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-700/60 text-[11px] text-amber-200 leading-snug">
+              <strong>Sin cobro:</strong> {receipt.motivoExoneracion}
+            </div>
+          )}
 
           {/* Details breakdown */}
           <div className="space-y-2.5 text-xs">

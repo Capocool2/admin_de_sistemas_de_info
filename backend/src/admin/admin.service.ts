@@ -13,7 +13,9 @@ import { Usuario } from '../database/entities/usuario.entity';
 import { ZonaGeocerca } from '../database/entities/zona-geocerca.entity';
 import { TelemetryGateway } from '../telemetry/telemetry.gateway';
 import {
+  DispatchRecoveryDto,
   RelocateScooterDto,
+  ScheduleFreeEndDto,
   SendScooterNoticeDto,
   UpdateScooterStatusDto,
   UpdateUserStatusDto,
@@ -97,10 +99,19 @@ export class AdminService {
        ORDER BY m.id ASC;`,
     );
 
-    return rows.map((row) => ({
-      ...row,
-      pending_maintenance: this.telemetryGateway.isPendingMaintenance(row.id),
-    }));
+    return rows.map((row) => {
+      const recovery = this.telemetryGateway.getRecoveryInfo(row.id);
+      const recall = this.telemetryGateway.getRecallInfo(row.id);
+      return {
+        ...row,
+        pending_maintenance: this.telemetryGateway.isPendingMaintenance(row.id),
+        recovery_in_progress: Boolean(recovery),
+        recovery_station_name: recovery?.stationName || null,
+        recovery_progress: recovery?.progress ?? 0,
+        recall_deadline_at: recall?.deadlineAt || null,
+        recall_reason: recall?.reason || null,
+      };
+    });
   }
 
   /**
@@ -231,6 +242,154 @@ export class AdminService {
     return {
       statusCode: 200,
       message: `${scooterId} recolocado en ${station.nombre}${recharge ? ' con batería al 100%' : ''}.`,
+    };
+  }
+
+  /**
+   * Enviar logística ("Mandar buscar") para recuperar un monopatín perdido/bloqueado hacia una estación de parqueo
+   */
+  async dispatchRecovery(scooterId: string, dto: DispatchRecoveryDto) {
+    const rows: any[] = await this.dataSource.query(
+      `SELECT m.id, m.estado, m.nivel_bateria,
+              ST_Y(m.ubicacion) AS lat, ST_X(m.ubicacion) AS lng,
+              COALESCE(z.tipo = 'parqueo', false) AS is_parking_zone,
+              (z.id IS NULL OR z.tipo = 'prohibida') AS out_of_zone
+       FROM monopatines m
+       LEFT JOIN LATERAL (
+         SELECT id, tipo
+         FROM zonas_geocercas
+         WHERE tipo <> 'perimetro' AND ST_Contains(poligono, m.ubicacion)
+         ORDER BY CASE
+           WHEN tipo = 'prohibida' THEN 1
+           WHEN tipo = 'parqueo' THEN 2
+           ELSE 3 END
+         LIMIT 1
+       ) z ON TRUE
+       WHERE m.id = $1
+       LIMIT 1;`,
+      [scooterId],
+    );
+    const scooter = rows[0];
+    if (!scooter) {
+      throw new NotFoundException(`Monopatín ${scooterId} no encontrado.`);
+    }
+
+    const activeTrips: Array<{ id: string }> = await this.dataSource.query(
+      `SELECT id FROM viajes WHERE monopatin_id = $1 AND estado = 'activo' LIMIT 1;`,
+      [scooterId],
+    );
+    if (activeTrips.length > 0) {
+      throw new BadRequestException(
+        `El monopatín ${scooterId} tiene un viaje activo. Primero programa su cierre en 5 min o cierra el viaje bloqueado.`,
+      );
+    }
+
+    if (this.telemetryGateway.getRecoveryInfo(scooterId)) {
+      throw new BadRequestException(
+        `Ya hay un equipo de recuperación en camino recogiendo a ${scooterId}.`,
+      );
+    }
+
+    const isLostOrDisplaced =
+      Boolean(scooter.out_of_zone) ||
+      scooter.estado === 'bloqueado' ||
+      !scooter.is_parking_zone;
+
+    if (!isLostOrDisplaced) {
+      throw new BadRequestException(
+        `${scooterId} ya se encuentra dentro de una estación de parqueo autorizada (${scooter.estado}).`,
+      );
+    }
+
+    const startLat = Number(scooter.lat) || 11.0182;
+    const startLng = Number(scooter.lng) || -74.7952;
+
+    let targetStationId: 'P1' | 'P2' | 'P3' = dto.stationId || 'P1';
+    if (!dto.stationId) {
+      let bestDist = Infinity;
+      for (const [id, st] of Object.entries(PARKING_STATIONS) as Array<
+        ['P1' | 'P2' | 'P3', { nombre: string; lat: number; lng: number }]
+      >) {
+        const dist = Math.hypot(startLat - st.lat, startLng - st.lng);
+        if (dist < bestDist) {
+          bestDist = dist;
+          targetStationId = id;
+        }
+      }
+    }
+
+    const station = PARKING_STATIONS[targetStationId];
+    const recharge = dto.rechargeBattery !== false;
+    const targetBattery = recharge ? 100 : Math.max(Number(scooter.nivel_bateria) || 0, 0);
+
+    await this.telemetryGateway.dispatchScooterRecovery({
+      scooterId,
+      stationId: targetStationId,
+      stationName: station.nombre,
+      targetLat: station.lat,
+      targetLng: station.lng,
+      startLat,
+      startLng,
+      targetBattery,
+    });
+
+    return {
+      statusCode: 200,
+      stationId: targetStationId,
+      stationName: station.nombre,
+      message: `Unidad logística enviada para buscar ${scooterId} y traerlo a ${station.nombre}.`,
+    };
+  }
+
+  /**
+   * Programar fin automático del viaje en 5 minutos sin cobro ($0 COP) para revisión técnica de seguridad
+   */
+  async scheduleFreeEnd(
+    scooterId: string,
+    dto: ScheduleFreeEndDto,
+    adminName?: string,
+  ) {
+    const scooter = await this.monopatinRepo.findOne({ where: { id: scooterId } });
+    if (!scooter) {
+      throw new NotFoundException(`Monopatín ${scooterId} no encontrado.`);
+    }
+
+    const activeTrips: Array<{ id: string; usuario_id: string }> =
+      await this.dataSource.query(
+        `SELECT id, usuario_id FROM viajes WHERE monopatin_id = $1 AND estado = 'activo' LIMIT 1;`,
+        [scooterId],
+      );
+    if (activeTrips.length === 0) {
+      throw new BadRequestException(
+        `El monopatín ${scooterId} no tiene un viaje activo en curso.`,
+      );
+    }
+
+    const existingRecall = this.telemetryGateway.getRecallInfo(scooterId);
+    if (existingRecall) {
+      throw new BadRequestException(
+        `${scooterId} ya tiene una finalización gratuita programada (${existingRecall.remainingSeconds}s restantes).`,
+      );
+    }
+
+    const delayMinutes = dto.delayMinutes ?? 5;
+    const reason =
+      dto.reason?.trim() ||
+      'Revisión técnica preventiva de seguridad solicitada por operador';
+
+    const result = await this.telemetryGateway.scheduleFreeSafetyEnd({
+      scooterId,
+      viajeId: activeTrips[0].id,
+      usuarioId: activeTrips[0].usuario_id,
+      reason,
+      adminName: adminName || 'Centro de Control SAME',
+      delayMinutes,
+    });
+
+    return {
+      statusCode: 200,
+      ...result,
+      message: `Aviso enviado al turista. El viaje en ${scooterId} finalizará automáticamente en ${result.delayMinutes} minutos sin cobro ($0 COP) y pasará a mantenimiento.`,
     };
   }
 

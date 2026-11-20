@@ -154,6 +154,7 @@ export const AdminTripsTab: React.FC<AdminTripsTabProps> = ({
                 const ref = trip.pagos?.[0]?.referencia_transaccion || '';
                 const hasPenalty =
                   ref.startsWith('PAY-PENALTY') || ref.startsWith('PAY-ABANDON');
+                const isWaived = ref.startsWith('PAY-EXONERADO');
 
                 return (
                   <tr key={trip.id} className="hover:bg-slate-800/40">
@@ -189,11 +190,18 @@ export const AdminTripsTab: React.FC<AdminTripsTabProps> = ({
                     </td>
                     <td className="px-4 py-3 font-mono">
                       <div className="font-bold text-white">
-                        {trip.costo_total ? formatCOP(trip.costo_total) : '—'}
+                        {trip.costo_total !== null && trip.costo_total !== undefined
+                          ? formatCOP(trip.costo_total)
+                          : '—'}
                       </div>
                       {hasPenalty && (
                         <span className="text-[9px] text-amber-400 font-sans font-semibold">
                           Incluye multa abandono
+                        </span>
+                      )}
+                      {isWaived && (
+                        <span className="text-[9px] text-cyan-400 font-sans font-semibold">
+                          Sin cobro (Revisión 5m)
                         </span>
                       )}
                     </td>

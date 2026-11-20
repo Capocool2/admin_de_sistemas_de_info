@@ -53,6 +53,30 @@ export class TelemetryGateway
   private readonly AUTO_ABANDON_IDLE_MS = 30000;
   private readonly scooterWasOutside = new Map<string, boolean>();
   private readonly lastPerimeterBreachAt = new Map<string, number>();
+  private readonly activeRecoveries = new Map<
+    string,
+    {
+      stationId: 'P1' | 'P2' | 'P3';
+      stationName: string;
+      targetLat: number;
+      targetLng: number;
+      progress: number;
+      timer: NodeJS.Timeout;
+    }
+  >();
+  private readonly scheduledFreeRecalls = new Map<
+    string,
+    {
+      scooterId: string;
+      viajeId: string;
+      usuarioId: string;
+      deadlineAt: number;
+      reason: string;
+      adminName: string;
+      timer: NodeJS.Timeout;
+    }
+  >();
+  private readonly freeRecallTripIds = new Set<string>();
 
   constructor(private readonly dataSource: DataSource) {}
 
@@ -249,6 +273,9 @@ export class TelemetryGateway
   private async processTelemetry(data: TelemetryUpdateDto) {
     try {
       const { scooterId, lat, lng, speed, battery, locked } = data;
+      if (this.activeRecoveries.has(scooterId)) {
+        return { status: 'ignored_during_recovery' };
+      }
 
       // 1. Verificación Espacial con PostGIS (Geofencing)
       // a. Zonas internas de velocidad y parqueo (excluyendo el perímetro global)
@@ -505,6 +532,7 @@ export class TelemetryGateway
       }
 
       // 10. Retransmisión de telemetría a salas de dashboard y clientes móviles
+      const activeRecall = this.scheduledFreeRecalls.get(scooterId);
       const broadcastPayload = {
         scooterId,
         lat,
@@ -520,6 +548,11 @@ export class TelemetryGateway
         outOfPerimeter: isOutOfPerimeter,
         emergencyStopped: isOutOfPerimeter && (shouldHardLock || dbEstado === 'bloqueado'),
         pendingMaintenance: this.pendingMaintenanceScooters.has(scooterId),
+        recoveryInProgress: false,
+        recoveryStationName: null,
+        recoveryProgress: 0,
+        recallDeadlineAt: activeRecall ? new Date(activeRecall.deadlineAt).toISOString() : null,
+        recallReason: activeRecall ? activeRecall.reason : null,
         timestamp: new Date().toISOString(),
       };
 
@@ -553,7 +586,7 @@ export class TelemetryGateway
       [trip.usuario_id],
     );
 
-    const updatedUser = updateResult[0];
+    const updatedUser = this.extractFirstRow<any>(updateResult);
     const strikes = Number(updatedUser?.infracciones_perimetro) || 1;
 
     // 2. Registrar alerta en tabla alertas (tipo_alerta = 'salida_perimetro', coordenadas actuales)
@@ -708,6 +741,9 @@ export class TelemetryGateway
    * Cierre automático y sanción cuando un monopatín queda abandonado e inmóvil fuera de estación
    */
   private async handleAutoAbandonedScooter(scooterId: string, lat: number, lng: number) {
+    if (this.scheduledFreeRecalls.has(scooterId)) {
+      return;
+    }
     this.logger.warn(`⚠️ Abandono por inactividad detectado en monopatín ${scooterId} fuera de estación`);
     this.stopFallbackRandom(scooterId);
     this.manualControlScooters.delete(scooterId);
@@ -781,6 +817,7 @@ export class TelemetryGateway
    */
   clearScooterRuntime(scooterId: string) {
     this.stopFallbackRandom(scooterId);
+    this.clearScheduledFreeRecall(scooterId);
     this.manualControlScooters.delete(scooterId);
     this.idleOutsideSince.delete(scooterId);
     this.lastPerimeterAlertAt.delete(scooterId);
@@ -796,6 +833,15 @@ export class TelemetryGateway
     for (const timer of this.fallbackRandomTimers.values()) {
       clearInterval(timer);
     }
+    for (const rec of this.activeRecoveries.values()) {
+      clearInterval(rec.timer);
+    }
+    for (const recall of this.scheduledFreeRecalls.values()) {
+      clearTimeout(recall.timer);
+    }
+    this.activeRecoveries.clear();
+    this.scheduledFreeRecalls.clear();
+    this.freeRecallTripIds.clear();
     this.fallbackRandomTimers.clear();
     this.fallbackPositions.clear();
     this.manualControlScooters.clear();
@@ -809,6 +855,335 @@ export class TelemetryGateway
     this.server.to('scooters').to('client_trips').to('dashboard').emit('scooter:reset', {
       timestamp: new Date().toISOString(),
     });
+  }
+
+  getRecoveryInfo(scooterId: string) {
+    const rec = this.activeRecoveries.get(scooterId);
+    if (!rec) return null;
+    return {
+      stationId: rec.stationId,
+      stationName: rec.stationName,
+      progress: rec.progress,
+    };
+  }
+
+  cancelRecovery(scooterId: string) {
+    const existing = this.activeRecoveries.get(scooterId);
+    if (existing) {
+      clearInterval(existing.timer);
+      this.activeRecoveries.delete(scooterId);
+    }
+  }
+
+  /**
+   * Envía equipo de recuperación logística para recoger un monopatín perdido y devolverlo a un parqueo
+   */
+  async dispatchScooterRecovery(params: {
+    scooterId: string;
+    stationId: 'P1' | 'P2' | 'P3';
+    stationName: string;
+    targetLat: number;
+    targetLng: number;
+    startLat: number;
+    startLng: number;
+    targetBattery: number;
+  }) {
+    const {
+      scooterId,
+      stationId,
+      stationName,
+      targetLat,
+      targetLng,
+      startLat,
+      startLng,
+      targetBattery,
+    } = params;
+
+    this.cancelRecovery(scooterId);
+    this.sendLockCommand(scooterId);
+
+    await this.dataSource.query(
+      `UPDATE monopatines
+       SET estado = 'bloqueado',
+           velocidad_actual = 0.00,
+           updated_at = NOW()
+       WHERE id = $1;`,
+      [scooterId],
+    );
+
+    const TOTAL_STEPS = 8;
+    let step = 0;
+
+    const emitRecoveryPayload = (
+      status: 'en_camino' | 'completado',
+      lat: number,
+      lng: number,
+      progress: number,
+    ) => {
+      const msg =
+        status === 'en_camino'
+          ? `Equipo logístico en camino con ${scooterId} hacia ${stationName} (${progress}%).`
+          : `${scooterId} recuperado y estacionado en ${stationName} (${targetBattery}% batería).`;
+      this.server
+        .to('dashboard')
+        .to('client_trips')
+        .emit('scooter:recovery_status', {
+          scooterId,
+          status,
+          stationId,
+          stationName,
+          progress,
+          lat,
+          lng,
+          message: msg,
+          timestamp: new Date().toISOString(),
+        });
+    };
+
+    const timer = setInterval(async () => {
+      step += 1;
+      const ratio = Math.min(1, step / TOTAL_STEPS);
+      const curLat = Number((startLat + (targetLat - startLat) * ratio).toFixed(6));
+      const curLng = Number((startLng + (targetLng - startLng) * ratio).toFixed(6));
+      const progress = Math.round(ratio * 100);
+
+      const rec = this.activeRecoveries.get(scooterId);
+      if (rec) {
+        rec.progress = progress;
+      }
+
+      if (step < TOTAL_STEPS) {
+        await this.dataSource.query(
+          `UPDATE monopatines
+           SET ubicacion = ST_SetSRID(ST_MakePoint($1, $2), 4326),
+               estado = 'bloqueado',
+               velocidad_actual = 0.00,
+               updated_at = NOW()
+           WHERE id = $3;`,
+          [curLng, curLat, scooterId],
+        );
+        emitRecoveryPayload('en_camino', curLat, curLng, progress);
+        await this.broadcastScooterSnapshot(scooterId);
+        return;
+      }
+
+      clearInterval(timer);
+      this.activeRecoveries.delete(scooterId);
+
+      const finalEstado = targetBattery < 20 ? 'mantenimiento' : 'disponible';
+      await this.dataSource.query(
+        `UPDATE monopatines
+         SET estado = $1,
+             velocidad_actual = 0.00,
+             nivel_bateria = $2,
+             ubicacion = ST_SetSRID(ST_MakePoint($3, $4), 4326),
+             updated_at = NOW()
+         WHERE id = $5;`,
+        [finalEstado, targetBattery, targetLng, targetLat, scooterId],
+      );
+
+      await this.dataSource.query(
+        `UPDATE alertas SET estado = 'atendida' WHERE monopatin_id = $1 AND estado = 'pendiente';`,
+        [scooterId],
+      );
+
+      await this.notifyScooterRelocated(scooterId, targetLat, targetLng, targetBattery);
+      this.notifyAlertsChanged();
+      emitRecoveryPayload('completado', targetLat, targetLng, 100);
+      this.logger.log(`🚚 Recuperación completada: ${scooterId} estacionado en ${stationName}`);
+    }, 900);
+
+    this.activeRecoveries.set(scooterId, {
+      stationId,
+      stationName,
+      targetLat,
+      targetLng,
+      progress: 0,
+      timer,
+    });
+
+    emitRecoveryPayload('en_camino', startLat, startLng, 0);
+    await this.broadcastScooterSnapshot(scooterId);
+  }
+
+  getRecallInfo(scooterId: string) {
+    const recall = this.scheduledFreeRecalls.get(scooterId);
+    if (!recall) return null;
+    return {
+      viajeId: recall.viajeId,
+      deadlineAt: new Date(recall.deadlineAt).toISOString(),
+      remainingSeconds: Math.max(0, Math.ceil((recall.deadlineAt - Date.now()) / 1000)),
+      reason: recall.reason,
+    };
+  }
+
+  getRecallInfoByTripId(viajeId: string) {
+    for (const recall of this.scheduledFreeRecalls.values()) {
+      if (recall.viajeId === viajeId) {
+        return {
+          viajeId: recall.viajeId,
+          deadlineAt: new Date(recall.deadlineAt).toISOString(),
+          remainingSeconds: Math.max(0, Math.ceil((recall.deadlineAt - Date.now()) / 1000)),
+          reason: recall.reason,
+        };
+      }
+    }
+    return null;
+  }
+
+  isTripFreeRecall(viajeId: string): boolean {
+    return this.freeRecallTripIds.has(viajeId);
+  }
+
+  clearScheduledFreeRecall(scooterId: string, preserveFreeFlag = false) {
+    const existing = this.scheduledFreeRecalls.get(scooterId);
+    if (existing) {
+      clearTimeout(existing.timer);
+      this.scheduledFreeRecalls.delete(scooterId);
+      if (!preserveFreeFlag) {
+        this.freeRecallTripIds.delete(existing.viajeId);
+      }
+    }
+  }
+
+  /**
+   * Programa la finalización gratuita de un viaje en N minutos (por defecto 5 min) para revisar el monopatín
+   */
+  async scheduleFreeSafetyEnd(params: {
+    scooterId: string;
+    viajeId: string;
+    usuarioId: string;
+    reason: string;
+    adminName: string;
+    delayMinutes?: number;
+  }) {
+    const { scooterId, viajeId, usuarioId, reason, adminName } = params;
+    const delayMinutes = params.delayMinutes ?? 5;
+    const delayMs = delayMinutes * 60 * 1000;
+    const deadlineAt = Date.now() + delayMs;
+
+    this.clearScheduledFreeRecall(scooterId);
+    this.pendingMaintenanceScooters.add(scooterId);
+    this.freeRecallTripIds.add(viajeId);
+
+    const timer = setTimeout(async () => {
+      await this.executeScheduledFreeEnd(scooterId, viajeId, reason);
+    }, delayMs);
+
+    this.scheduledFreeRecalls.set(scooterId, {
+      scooterId,
+      viajeId,
+      usuarioId,
+      deadlineAt,
+      reason,
+      adminName,
+      timer,
+    });
+
+    const deadlineIso = new Date(deadlineAt).toISOString();
+    const noticeMsg =
+      `AVISO DE SEGURIDAD: Debemos revisar técnicamente ${scooterId} (${reason}). ` +
+      `Tu viaje finalizará automáticamente en ${delayMinutes} minutos y NO tendrá ningún cobro ($0 COP).`;
+
+    this.server
+      .to(`scooter_${scooterId}`)
+      .to('client_trips')
+      .to('dashboard')
+      .emit('trip:recall_scheduled', {
+        scooterId,
+        viajeId,
+        usuarioId,
+        deadlineAt: deadlineIso,
+        delayMinutes,
+        freeOfCharge: true,
+        reason,
+        adminName,
+        message: noticeMsg,
+        timestamp: new Date().toISOString(),
+      });
+
+    await this.broadcastScooterSnapshot(scooterId);
+    this.logger.warn(`⏱️ Recall gratuito de ${delayMinutes} min programado para ${scooterId} (Viaje ${viajeId})`);
+
+    return {
+      deadlineAt: deadlineIso,
+      delayMinutes,
+    };
+  }
+
+  private async executeScheduledFreeEnd(scooterId: string, viajeId: string, reason: string) {
+    this.scheduledFreeRecalls.delete(scooterId);
+
+    try {
+      const rows: Array<{ id: string; usuario_id: string; inicio_viaje: Date; estado: string }> =
+        await this.dataSource.query(
+          `SELECT id, usuario_id, inicio_viaje, estado FROM viajes WHERE id = $1 LIMIT 1;`,
+          [viajeId],
+        );
+      const viaje = rows[0];
+      if (!viaje || viaje.estado !== 'activo') {
+        this.freeRecallTripIds.delete(viajeId);
+        return;
+      }
+
+      const finViaje = new Date();
+      const duracionMs = finViaje.getTime() - new Date(viaje.inicio_viaje).getTime();
+      const duracionMinutos = Math.max(1, Math.ceil(duracionMs / (1000 * 60)));
+      const referencia = `PAY-EXONERADO-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}`;
+
+      await this.dataSource.query(
+        `UPDATE viajes
+         SET estado = 'finalizado',
+             fin_viaje = NOW(),
+             duracion_minutos = $1,
+             costo_total = 0.00,
+             foto_evidencia_url = COALESCE(foto_evidencia_url, 'RECALL-REVISION-TECNICA-SIN-COBRO')
+         WHERE id = $2;`,
+        [duracionMinutos, viajeId],
+      );
+
+      await this.dataSource.query(
+        `INSERT INTO pagos (viaje_id, monto, estado, referencia_transaccion, created_at)
+         VALUES ($1, 0.00, 'aprobado', $2, NOW());`,
+        [viajeId, referencia],
+      );
+
+      await this.dataSource.query(
+        `UPDATE monopatines
+         SET estado = 'mantenimiento',
+             velocidad_actual = 0.00,
+             updated_at = NOW()
+         WHERE id = $1;`,
+        [scooterId],
+      );
+
+      this.freeRecallTripIds.delete(viajeId);
+      this.pendingMaintenanceScooters.delete(scooterId);
+      this.sendLockCommand(scooterId);
+      await this.broadcastScooterSnapshot(scooterId);
+
+      this.server
+        .to(`scooter_${scooterId}`)
+        .to('client_trips')
+        .to('dashboard')
+        .emit('trip:recall_completed', {
+          scooterId,
+          viajeId,
+          usuarioId: viaje.usuario_id,
+          duracionMinutos,
+          tarifaMinutoCOP: 0,
+          costoTotalCOP: 0,
+          referencia,
+          finViaje: finViaje.toISOString(),
+          reason,
+          message: `Viaje en ${scooterId} finalizado por revisión de seguridad técnica sin ningún cobro ($0 COP).`,
+        });
+
+      this.logger.log(`🛠️ Recall gratuito ejecutado: Viaje ${viajeId} cerrado en $0 COP y ${scooterId} pasado a mantenimiento.`);
+    } catch (err) {
+      this.freeRecallTripIds.delete(viajeId);
+      this.logger.error(`Error ejecutando fin gratuito programado para ${scooterId}: ${err.message}`);
+    }
   }
 
   /**
@@ -891,6 +1266,8 @@ export class TelemetryGateway
         : Number(sc.limite_velocidad) ||
           (sc.zone_type === 'peatonal' || sc.zone_type === 'parqueo' ? 10 : 20);
 
+      const activeRec = this.activeRecoveries.get(sc.id);
+      const activeRecall = this.scheduledFreeRecalls.get(sc.id);
       const payload = {
         scooterId: sc.id,
         lat: Number(sc.lat) || 11.0182,
@@ -906,6 +1283,11 @@ export class TelemetryGateway
         outOfPerimeter,
         emergencyStopped: outOfPerimeter || sc.estado === 'bloqueado',
         pendingMaintenance: this.pendingMaintenanceScooters.has(sc.id),
+        recoveryInProgress: Boolean(activeRec),
+        recoveryStationName: activeRec?.stationName || null,
+        recoveryProgress: activeRec?.progress ?? 0,
+        recallDeadlineAt: activeRecall ? new Date(activeRecall.deadlineAt).toISOString() : null,
+        recallReason: activeRecall ? activeRecall.reason : null,
         timestamp: new Date().toISOString(),
       };
 
@@ -924,6 +1306,7 @@ export class TelemetryGateway
     lng: number,
     battery: number,
   ) {
+    this.cancelRecovery(scooterId);
     this.clearScooterRuntime(scooterId);
     this.pendingMaintenanceScooters.delete(scooterId);
 

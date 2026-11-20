@@ -19,6 +19,7 @@ import { ActiveTripPanel } from '../components/ActiveTripPanel';
 import { EndTripModal } from '../components/EndTripModal';
 import { ReceiptModal } from '../components/ReceiptModal';
 import { JoystickControl, JoystickVector } from '../components/JoystickControl';
+import { AdminConfirmRequest, AdminPasswordModal } from '../components/admin/AdminPasswordModal';
 import {
   ActiveTrip,
   TelemetryBroadcast,
@@ -92,6 +93,7 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
   const [receipt, setReceipt] = useState<TripReceipt | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pendingAdminConfirm, setPendingAdminConfirm] = useState<AdminConfirmRequest | null>(null);
 
   // Refs para bucle de físicas y listeners sin cierres obsoletos
   const activeTripRef = useRef<ActiveTrip | null>(null);
@@ -315,6 +317,8 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
             inicioViaje: trip.inicio_viaje,
             tarifaMinutoCOP: Number(trip.tarifaMinutoCOP) || 500,
             estado: trip.estado,
+            recallDeadlineAt: trip.recallDeadlineAt ?? null,
+            recallReason: trip.recallReason ?? null,
           });
           joinRoom('client_trips', trip.monopatin_id);
         }
@@ -688,6 +692,82 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       logout();
     };
 
+    const handleRecallScheduled = (data: {
+      scooterId?: string;
+      deadlineAt: string;
+      reason: string;
+      message: string;
+    }) => {
+      if (data.scooterId && activeTripRef.current?.scooterId !== data.scooterId) {
+        return;
+      }
+      setActiveTrip((prev) =>
+        prev
+          ? {
+              ...prev,
+              recallDeadlineAt: data.deadlineAt,
+              recallReason: data.reason,
+            }
+          : prev,
+      );
+      setOperatorNotice(data.message);
+    };
+
+    const handleRecallCompleted = (data: {
+      scooterId: string;
+      viajeId: string;
+      duracionMinutos?: number;
+      referencia?: string;
+      finViaje?: string;
+      reason?: string;
+      message: string;
+    }) => {
+      const currentTrip = activeTripRef.current;
+      if (!currentTrip || currentTrip.scooterId !== data.scooterId) {
+        loadInitialFleet();
+        return;
+      }
+
+      stopManualModeAndNotify(false);
+      stopAlarm();
+      setIsEmergencyLocked(false);
+      setAlarmReason(null);
+      setIsEndModalOpen(false);
+      setOperatorNotice(null);
+      setActiveTrip(null);
+      setReceipt({
+        viajeId: data.viajeId || currentTrip.viajeId,
+        scooterId: data.scooterId,
+        estacionParqueo: 'Revisión Técnica de Seguridad (Sin cobro)',
+        inicioViaje: currentTrip.inicioViaje,
+        finViaje: data.finViaje || new Date().toISOString(),
+        duracionMinutos: data.duracionMinutos || 1,
+        tarifaMinutoCOP: 0,
+        multaCOP: 0,
+        penalizado: false,
+        exonerado: true,
+        motivoExoneracion:
+          data.reason ||
+          'El Centro de Control finalizó tu viaje por revisión técnica preventiva sin costo.',
+        costoTotalCOP: 0,
+        pago: {
+          id: data.viajeId || currentTrip.viajeId,
+          referencia: data.referencia || 'PAY-EXONERADO',
+          estado: 'aprobado',
+          monto: 0,
+        },
+        scooterEstadoActual: 'mantenimiento',
+      });
+      setSystemBanner(data.message);
+      loadInitialFleet();
+    };
+
+    const handleRecoveryStatus = (data: { status: 'en_camino' | 'completado' }) => {
+      if (data.status === 'completado') {
+        loadInitialFleet();
+      }
+    };
+
     socket.on('connect', handleConnect);
     socket.on('telemetry:broadcast', handleTelemetry);
     socket.on('scooter:emergency_stop', handleEmergencyStop);
@@ -699,6 +779,9 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
     socket.on('zones:updated', handleZonesUpdated);
     socket.on('trip:perimeter_warning', handlePerimeterWarning);
     socket.on('user:banned', handleUserBanned);
+    socket.on('trip:recall_scheduled', handleRecallScheduled);
+    socket.on('trip:recall_completed', handleRecallCompleted);
+    socket.on('scooter:recovery_status', handleRecoveryStatus);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -712,8 +795,11 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
       socket.off('zones:updated', handleZonesUpdated);
       socket.off('trip:perimeter_warning', handlePerimeterWarning);
       socket.off('user:banned', handleUserBanned);
+      socket.off('trip:recall_scheduled', handleRecallScheduled);
+      socket.off('trip:recall_completed', handleRecallCompleted);
+      socket.off('scooter:recovery_status', handleRecoveryStatus);
     };
-  }, [activeTrip?.scooterId, loadInitialFleet, updateScooterMarker]);
+  }, [activeTrip?.scooterId, loadInitialFleet, stopAlarm, stopManualModeAndNotify, updateScooterMarker]);
 
   // 4. Listeners de teclado (WASD y Flechas) cuando el control manual está activo
   useEffect(() => {
@@ -1131,21 +1217,28 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
     }
   };
 
-  // Reset rápido para pruebas de desarrollo
-  const handleDevReset = async () => {
-    if (window.confirm('¿Deseas reiniciar los viajes de prueba y liberar todos los monopatines?')) {
-      stopManualModeAndNotify(false);
-      stopAlarm();
-      await resetDevTrips();
-      setActiveTrip(null);
-      setIsEmergencyLocked(false);
-      setAlarmReason(null);
-      setErrorMessage(null);
-      setSystemBanner(null);
-      setLiveTelemetry(null);
-      await loadInitialFleet();
-      alert('Ambiente reiniciado: Monopatines en estado disponible en sus estaciones.');
-    }
+  // Reset rápido para pruebas de desarrollo (exige contraseña de administrador)
+  const handleDevReset = () => {
+    setPendingAdminConfirm({
+      title: 'Resetear flota y viajes de prueba',
+      description:
+        'Truncará los viajes y alertas de prueba y devolverá todos los monopatines a disponible en sus estaciones.',
+      danger: true,
+      confirmLabel: 'Confirmar reseteo',
+      onConfirm: async (adminPassword) => {
+        stopManualModeAndNotify(false);
+        stopAlarm();
+        await resetDevTrips(adminPassword);
+        setActiveTrip(null);
+        setIsEmergencyLocked(false);
+        setAlarmReason(null);
+        setErrorMessage(null);
+        setSystemBanner(null);
+        setOperatorNotice(null);
+        setLiveTelemetry(null);
+        await loadInitialFleet();
+      },
+    });
   };
 
   const currentMaxSpeed =
@@ -1380,6 +1473,11 @@ export const UserMap: React.FC<UserMapProps> = ({ currentUser, onLogout }) => {
           </div>
         </div>
       )}
+
+      <AdminPasswordModal
+        request={pendingAdminConfirm}
+        onCancel={() => setPendingAdminConfirm(null)}
+      />
     </div>
   );
 };

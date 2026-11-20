@@ -37,6 +37,8 @@ export interface ActiveTrip {
   inicioViaje: string;
   tarifaMinutoCOP: number;
   estado: 'activo' | 'finalizado' | 'cancelado';
+  recallDeadlineAt?: string | null;
+  recallReason?: string | null;
 }
 
 export interface TripReceipt {
@@ -49,6 +51,8 @@ export interface TripReceipt {
   tarifaMinutoCOP: number;
   multaCOP?: number;
   penalizado?: boolean;
+  exonerado?: boolean;
+  motivoExoneracion?: string;
   costoTotalCOP: number;
   pago: {
     id: string;
@@ -104,6 +108,11 @@ export interface TelemetryBroadcast {
   outOfPerimeter?: boolean;
   emergencyStopped?: boolean;
   pendingMaintenance?: boolean;
+  recoveryInProgress?: boolean;
+  recoveryStationName?: string | null;
+  recoveryProgress?: number;
+  recallDeadlineAt?: string | null;
+  recallReason?: string | null;
   timestamp: string;
 }
 
