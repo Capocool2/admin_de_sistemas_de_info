@@ -1,7 +1,11 @@
 // frontend/src/services/api.ts
 import { AuthResponse } from '../types';
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
+const isLocalHost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_URL || (isLocalHost ? 'http://localhost:3000' : '');
 
 export function getAuthToken(): string | null {
   return localStorage.getItem('same_auth_token');

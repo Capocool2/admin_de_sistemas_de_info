@@ -2,14 +2,19 @@
 
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = (import.meta as any).env?.VITE_WS_URL || 'http://localhost:3000';
+const isLocalHost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const SOCKET_URL =
+  (import.meta as any).env?.VITE_WS_URL ||
+  (isLocalHost ? 'http://localhost:3000' : typeof window !== 'undefined' ? window.location.origin : '');
 
 let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
     socket = io(SOCKET_URL, {
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 10,
